@@ -547,25 +547,30 @@ export default function FinPilotApp() {
 
         {/* User Account / Session Profile */}
         <div className="mt-4 border-t border-[#e4e8df] pt-4">
-          <button
-            onClick={() => setShowProfileModal(true)}
-            className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left hover:bg-[#f0f4ed] transition"
-            title="Open Profile & Settings"
-          >
-            <div className="grid size-8 shrink-0 place-items-center rounded-full bg-[#d4e1d4] text-xs font-bold text-[#315646]">
-              {user?.email ? user.email[0].toUpperCase() : 'G'}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-semibold text-[#1d2d28]">
-                {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Guest Session'}
-              </p>
-              <p className="truncate text-[10px] text-[#89948d]">
-                {user ? 'Supabase Synchronized' : 'Local Demo Mode'}
-              </p>
-            </div>
+          {/* Profile row: clickable area (avatar+name) + separate action icon */}
+          <div className="flex items-center gap-2 rounded-xl px-2 py-2 hover:bg-[#f0f4ed] transition">
+            {/* Clicking avatar + name opens profile modal */}
+            <button
+              onClick={() => setShowProfileModal(true)}
+              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              title="Open Profile & Settings"
+            >
+              <div className="grid size-8 shrink-0 place-items-center rounded-full bg-[#d4e1d4] text-xs font-bold text-[#315646]">
+                {user?.email ? user.email[0].toUpperCase() : 'G'}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold text-[#1d2d28]">
+                  {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Guest Session'}
+                </p>
+                <p className="truncate text-[10px] text-[#89948d]">
+                  {user ? 'Supabase Synchronized' : 'Local Demo Mode'}
+                </p>
+              </div>
+            </button>
+            {/* Sign out / sign in — separate sibling button, never nested */}
             {user ? (
               <button
-                onClick={e => { e.stopPropagation(); handleSignOut() }}
+                onClick={handleSignOut}
                 title="Sign Out"
                 className="rounded-lg p-1.5 text-[#89948d] hover:bg-[#edf2ea] hover:text-red-600"
               >
@@ -573,14 +578,14 @@ export default function FinPilotApp() {
               </button>
             ) : (
               <button
-                onClick={e => { e.stopPropagation(); setShowAuthModal(true) }}
+                onClick={() => setShowAuthModal(true)}
                 title="Sign In / Register"
                 className="rounded-lg p-1.5 text-[#24463e] hover:bg-[#edf2ea]"
               >
                 <LogIn className="size-4" />
               </button>
             )}
-          </button>
+          </div>
           {/* Tour the app */}
           <button
             onClick={() => setShowExplorerModal(true)}

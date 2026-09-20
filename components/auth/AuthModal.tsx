@@ -19,7 +19,27 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
+  const [resending, setResending] = useState(false)
+
   if (!isOpen) return null
+
+  const handleResend = async () => {
+    if (!email) return
+    setResending(true)
+    setError(null)
+    try {
+      const { error: resendErr } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+      })
+      if (resendErr) throw resendErr
+      setSuccessMsg('Confirmation email resent! Please check your inbox and spam folder.')
+    } catch (err: any) {
+      setError(err.message || 'Failed to resend confirmation email.')
+    } finally {
+      setResending(false)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -42,14 +62,34 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
           onSuccess()
           onClose()
         } else {
-          setSuccessMsg('Account created! Please check your email inbox to confirm your address, or sign in.')
+          // Attempt instant sign in in case project does not require email confirmation
+          const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+          })
+          if (!signInErr && signInData.session) {
+            onSuccess()
+            onClose()
+            return
+          }
+
+          setSuccessMsg(
+            'Account created! Supabase has "Confirm email" enabled. If you do not receive the email, turn off "Confirm email" in your Supabase Auth settings for instant sign-in.'
+          )
         }
       } else {
         const { error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
         })
-        if (signInError) throw signInError
+        if (signInError) {
+          if (signInError.message?.toLowerCase().includes('email not confirmed')) {
+            throw new Error(
+              'Email not confirmed yet. You can resend the confirmation email below, or disable "Confirm email" in Supabase Auth > Providers > Email for instant access.'
+            )
+          }
+          throw signInError
+        }
         onSuccess()
         onClose()
       }
@@ -85,14 +125,37 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
 
         {error && (
           <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-            {error}
+            <p>{error}</p>
+            {error.toLowerCase().includes('email not confirmed') && (
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={resending}
+                className="mt-2 text-xs font-bold text-red-800 underline hover:text-red-950"
+              >
+                {resending ? 'Resending…' : 'Resend confirmation email →'}
+              </button>
+            )}
           </div>
         )}
 
         {successMsg && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl border border-[#cfe2d2] bg-[#f0f7f1] p-3 text-xs text-[#24463e]">
-            <CheckCircle2 className="size-4 shrink-0 text-[#24463e]" />
-            <span>{successMsg}</span>
+          <div className="mt-4 flex flex-col gap-2 rounded-xl border border-[#cfe2d2] bg-[#f0f7f1] p-3 text-xs text-[#24463e]">
+            <div className="flex items-start gap-2">
+              <CheckCircle2 className="size-4 shrink-0 text-[#24463e] mt-0.5" />
+              <span>{successMsg}</span>
+            </div>
+            <div className="mt-1 flex items-center justify-between border-t border-[#d7e9da] pt-2 text-[11px]">
+              <span className="text-[#516758]">Didn&apos;t receive it?</span>
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={resending}
+                className="font-bold underline hover:text-[#18312a]"
+              >
+                {resending ? 'Sending…' : 'Resend Email'}
+              </button>
+            </div>
           </div>
         )}
 

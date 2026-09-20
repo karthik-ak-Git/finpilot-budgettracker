@@ -47,11 +47,13 @@ import { RecurringTab } from '@/components/recurring/RecurringTab'
 import { GoalsTab } from '@/components/goals/GoalsTab'
 import { ReportsTab } from '@/components/reports/ReportsTab'
 
-// Modals
 import { AuthModal } from '@/components/auth/AuthModal'
 import { GeminiOnboardingModal } from '@/components/onboarding/GeminiOnboardingModal'
 import { TransactionModal } from '@/components/transactions/TransactionModal'
 import { CsvImportModal } from '@/components/import/CsvImportModal'
+import { ProfileModal } from '@/components/profile/ProfileModal'
+import { AppExplorerModal } from '@/components/explorer/AppExplorerModal'
+
 
 const navItems = [
   { id: 'Overview', label: 'Overview', icon: LayoutDashboard },
@@ -81,6 +83,9 @@ export default function FinPilotApp() {
   const [showTransactionModal, setShowTransactionModal] = useState(false)
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
   const [showCsvModal, setShowCsvModal] = useState(false)
+  const [showProfileModal, setShowProfileModal] = useState(false)
+  const [showExplorerModal, setShowExplorerModal] = useState(false)
+
 
   // Floating AI Chat State
   const [aiQuestion, setAiQuestion] = useState('')
@@ -541,36 +546,51 @@ export default function FinPilotApp() {
         </div>
 
         {/* User Account / Session Profile */}
-        <div className="mt-4 flex items-center gap-3 border-t border-[#e4e8df] px-2 pt-4">
-          <div className="grid size-8 shrink-0 place-items-center rounded-full bg-[#d4e1d4] text-xs font-bold text-[#315646]">
-            {user?.email ? user.email[0].toUpperCase() : 'G'}
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-semibold text-[#1d2d28]">
-              {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Guest Session'}
-            </p>
-            <p className="truncate text-[10px] text-[#89948d]">
-              {user ? 'Supabase Synchronized' : 'Local Demo Mode'}
-            </p>
-          </div>
-          {user ? (
-            <button
-              onClick={handleSignOut}
-              title="Sign Out"
-              className="rounded-lg p-1.5 text-[#89948d] hover:bg-[#edf2ea] hover:text-red-600"
-            >
-              <LogOut className="size-4" />
-            </button>
-          ) : (
-            <button
-              onClick={() => setShowAuthModal(true)}
-              title="Sign In / Register"
-              className="rounded-lg p-1.5 text-[#24463e] hover:bg-[#edf2ea]"
-            >
-              <LogIn className="size-4" />
-            </button>
-          )}
+        <div className="mt-4 border-t border-[#e4e8df] pt-4">
+          <button
+            onClick={() => setShowProfileModal(true)}
+            className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left hover:bg-[#f0f4ed] transition"
+            title="Open Profile & Settings"
+          >
+            <div className="grid size-8 shrink-0 place-items-center rounded-full bg-[#d4e1d4] text-xs font-bold text-[#315646]">
+              {user?.email ? user.email[0].toUpperCase() : 'G'}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-semibold text-[#1d2d28]">
+                {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Guest Session'}
+              </p>
+              <p className="truncate text-[10px] text-[#89948d]">
+                {user ? 'Supabase Synchronized' : 'Local Demo Mode'}
+              </p>
+            </div>
+            {user ? (
+              <button
+                onClick={e => { e.stopPropagation(); handleSignOut() }}
+                title="Sign Out"
+                className="rounded-lg p-1.5 text-[#89948d] hover:bg-[#edf2ea] hover:text-red-600"
+              >
+                <LogOut className="size-4" />
+              </button>
+            ) : (
+              <button
+                onClick={e => { e.stopPropagation(); setShowAuthModal(true) }}
+                title="Sign In / Register"
+                className="rounded-lg p-1.5 text-[#24463e] hover:bg-[#edf2ea]"
+              >
+                <LogIn className="size-4" />
+              </button>
+            )}
+          </button>
+          {/* Tour the app */}
+          <button
+            onClick={() => setShowExplorerModal(true)}
+            className="mt-1 flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-[11px] font-medium text-[#748078] hover:bg-[#f0f4ed] hover:text-[#1d2d28] transition"
+          >
+            <CircleHelp className="size-3.5" />
+            Tour the app
+          </button>
         </div>
+
       </aside>
 
       {/* Main Content Area */}
@@ -864,6 +884,23 @@ export default function FinPilotApp() {
         onClose={() => setShowCsvModal(false)}
         currency={currency}
         onImport={handleBatchImportCsv}
+      />
+
+      <ProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        user={user}
+        currentKey={geminiKey}
+        currentCurrency={currency}
+        onSave={(key, curr) => {
+          setGeminiKey(key)
+          setCurrency(curr)
+        }}
+      />
+
+      <AppExplorerModal
+        isOpen={showExplorerModal}
+        onClose={() => setShowExplorerModal(false)}
       />
     </div>
   )

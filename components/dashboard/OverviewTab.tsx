@@ -87,20 +87,34 @@ export function OverviewTab({
       }))
   }, [expenseTx])
 
-  // Dynamic daily/grouped activity for bar visualization
+  // Dynamic daily/grouped activity for bar visualization – always exactly 14 slots
   const activityBars = useMemo(() => {
-    // 14 representative bars based on recent days
+    const SLOTS = 14
+    // Build a map of the last 14 calendar days (keyed by YYYY-MM-DD)
+    const today = new Date()
+    const dayKeys: string[] = []
+    for (let i = SLOTS - 1; i >= 0; i--) {
+      const d = new Date(today)
+      d.setDate(today.getDate() - i)
+      dayKeys.push(d.toISOString().slice(0, 10))
+    }
+
     if (activeTx.length === 0) {
+      // Subtle placeholder pattern so the chart doesn't look broken
       return [20, 35, 45, 30, 60, 40, 55, 70, 45, 65, 50, 80, 60, 75]
     }
-    const days: Record<string, number> = {}
+
+    const dayMap: Record<string, number> = {}
     for (const t of activeTx) {
-      const day = t.date ? t.date.slice(8, 10) : '01'
-      days[day] = (days[day] || 0) + Math.abs(t.amount)
+      if (!t.date) continue
+      const key = t.date.slice(0, 10)
+      dayMap[key] = (dayMap[key] || 0) + Math.abs(t.amount)
     }
-    const values = Object.values(days)
-    const max = Math.max(...values, 100)
-    return values.slice(-14).map(v => Math.max(15, Math.min(100, Math.round((v / max) * 100))))
+
+    const values = dayKeys.map(k => dayMap[k] || 0)
+    const max = Math.max(...values, 1) // avoid division by zero
+    // Each bar is a percentage of the peak day; minimum 8% so zero days are still visible as a tiny tick
+    return values.map(v => v === 0 ? 8 : Math.max(15, Math.min(100, Math.round((v / max) * 100))))
   }, [activeTx])
 
   // Dynamic observations

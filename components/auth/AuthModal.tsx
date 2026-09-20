@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { getAppUrl } from '@/lib/gemini'
 import { Sparkles, X, Mail, Lock, User, ArrowRight, CheckCircle2 } from 'lucide-react'
 
 interface AuthModalProps {
@@ -28,12 +29,15 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
     setResending(true)
     setError(null)
     try {
+      const appUrl = getAppUrl()
+      const emailRedirectTo = `${appUrl.replace(/\/$/, '')}/dashboard`
       const { error: resendErr } = await supabase.auth.resend({
         type: 'signup',
         email,
+        options: { emailRedirectTo } as any,
       })
       if (resendErr) throw resendErr
-      setSuccessMsg('Confirmation email resent! Please check your inbox and spam folder.')
+      setSuccessMsg(`Confirmation email resent to ${email}! Check inbox & spam. Link will open ${appUrl} (not localhost when on Vercel).`)
     } catch (err: any) {
       setError(err.message || 'Failed to resend confirmation email.')
     } finally {
@@ -49,11 +53,14 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
 
     try {
       if (isSignUp) {
+        const appUrl = getAppUrl()
+        const emailRedirectTo = `${appUrl.replace(/\/$/, '')}/dashboard`
         const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: { full_name: fullName || email.split('@')[0] },
+            emailRedirectTo,
           },
         })
         if (signUpError) throw signUpError

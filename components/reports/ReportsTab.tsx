@@ -1,9 +1,17 @@
 'use client'
 
-import { useState } from 'react'
-import { FileText, Sparkles, Copy, Check, Download, AlertCircle } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { FileText, Sparkles, Copy, Check, Download, AlertCircle, Gauge, Database } from 'lucide-react'
 import { Transaction, Budget, RecurringItem, Goal } from '@/lib/types'
-import { buildFinancialContext } from '@/lib/gemini'
+import {
+  buildFinancialContext,
+  getStoredUseEnvKey,
+  getAiRequestCount,
+  canMakeAiRequest,
+  incrementAiRequestCount,
+  getRemainingAiRequests,
+  AI_REQUEST_LIMIT,
+} from '@/lib/gemini'
 
 interface ReportsTabProps {
   transactions: Transaction[]
@@ -28,6 +36,8 @@ export function ReportsTab({
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [requestCount, setRequestCount] = useState(0)
+  useEffect(() => { setRequestCount(getAiRequestCount()) }, [])
 
   // Current month stats
   const currentMonthStr = new Date().toISOString().slice(0, 7)
@@ -43,8 +53,13 @@ export function ReportsTab({
   const savingsRate = totalIncome > 0 ? Math.round((Math.max(0, netCashFlow) / totalIncome) * 100) : 0
 
   const handleGenerateAiReport = async () => {
-    if (!geminiKey) {
+    const isEnvMode = getStoredUseEnvKey()
+    if (!geminiKey && !isEnvMode) {
       onOpenGeminiModal()
+      return
+    }
+    if (!canMakeAiRequest()) {
+      setError(`AI limit reached: ${AI_REQUEST_LIMIT}/${AI_REQUEST_LIMIT} requests used today. Resets at midnight. ${getRemainingAiRequests()} remaining.`)
       return
     }
 
@@ -54,29 +69,39 @@ export function ReportsTab({
 
     try {
       const context = buildFinancialContext(currency, transactions, budgets, recurring, goals)
+      const currentCount = getAiRequestCount()
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-ai-request-count': String(currentCount),
+      }
+      if (isEnvMode) headers['x-use-env-key'] = 'true'
+      else headers['x-gemini-api-key'] = geminiKey
+
       const res = await fetch('/api/agent', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': geminiKey,
-        },
+        headers,
         body: JSON.stringify({
           mode: 'report',
-          apiKey: geminiKey,
+          apiKey: isEnvMode ? undefined : geminiKey,
+          useEnvKey: isEnvMode,
           financialContext: context,
         }),
       })
 
       const data = await res.json()
       if (!res.ok || data.error) {
+        if (data.limitReached) setRequestCount(getAiRequestCount())
         throw new Error(data.error || 'Failed to generate financial audit with Gemini.')
       }
 
+      const n = incrementAiRequestCount({ ts: Date.now(), mode: 'report', questionPreview: 'Monthly Report' })
+      setRequestCount(n)
       setReport(data.answer)
     } catch (err: any) {
       setError(err.message || 'Report generation failed.')
     } finally {
       setLoading(false)
+      setRequestCount(getAiRequestCount())
     }
   }
 
@@ -101,14 +126,20 @@ export function ReportsTab({
               Audited from your live transactions, category budgets, and recurring subscriptions.
             </p>
           </div>
-          <button
-            onClick={handleGenerateAiReport}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#24463e] px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1b3630] disabled:opacity-50"
-          >
-            <Sparkles className="size-3.5" />
-            {loading ? 'Analyzing with Google Gemini…' : 'Generate Full AI Monthly Audit'}
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-[#eef4ee] border border-[#dbe6dc] px-2.5 py-1 text-[11px] font-semibold text-[#24463e]">
+              <Gauge className="size-3" /> {requestCount}/{AI_REQUEST_LIMIT} · {Math.max(0, AI_REQUEST_LIMIT - requestCount)} left
+            </span>
+            <button
+              onClick={handleGenerateAiReport}
+              disabled={loading || requestCount >= AI_REQUEST_LIMIT}
+              title={requestCount >= AI_REQUEST_LIMIT ? '15/day limit reached' : ''}
+              className="inline-flex items-center gap-2 rounded-xl bg-[#24463e] px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1b3630] disabled:opacity-50"
+            >
+              <Sparkles className="size-3.5" />
+              {loading ? 'Analyzing with Google Gemini…' : requestCount >= AI_REQUEST_LIMIT ? 'Limit Reached' : 'Generate Full AI Monthly Audit'}
+            </button>
+          </div>
         </div>
 
         {/* Snapshot metrics */}

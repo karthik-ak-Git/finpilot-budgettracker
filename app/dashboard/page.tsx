@@ -31,6 +31,13 @@ import {
   getStoredCurrency,
   setStoredCurrency,
   buildFinancialContext,
+  getStoredUseEnvKey,
+  setStoredUseEnvKey,
+  getAiRequestCount,
+  getRemainingAiRequests,
+  canMakeAiRequest,
+  incrementAiRequestCount,
+  AI_REQUEST_LIMIT,
 } from '@/lib/gemini'
 import {
   sampleTransactions,
@@ -69,6 +76,8 @@ export default function FinPilotApp() {
   const [user, setUser] = useState<any>(null)
   const [geminiKey, setGeminiKey] = useState('')
   const [currency, setCurrency] = useState('$')
+  const [useEnvKey, setUseEnvKey] = useState(false)
+  const [aiRequestCount, setAiRequestCount] = useState(0)
 
   // Financial Data State
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -96,8 +105,11 @@ export default function FinPilotApp() {
   useEffect(() => {
     const key = getStoredGeminiKey()
     const curr = getStoredCurrency()
+    const envPref = getStoredUseEnvKey()
     if (key) setGeminiKey(key)
     if (curr) setCurrency(curr)
+    setUseEnvKey(envPref)
+    setAiRequestCount(getAiRequestCount())
 
     // Check Supabase Auth
     supabase.auth.getUser().then(({ data }) => {
@@ -432,11 +444,16 @@ export default function FinPilotApp() {
     }
   }
 
-  // --- Ask Gemini Agent ---
+  // --- Ask Gemini Agent (15/day limit + .env key toggle, reuses existing connection) ---
   const handleAskAgent = async (promptQuestion = aiQuestion) => {
     if (!promptQuestion.trim()) return
-    if (!geminiKey) {
+    const isEnvMode = getStoredUseEnvKey() || useEnvKey
+    if (!geminiKey && !isEnvMode) {
       setShowGeminiModal(true)
+      return
+    }
+    if (!canMakeAiRequest()) {
+      setAiAnswer(`AI limit reached: ${AI_REQUEST_LIMIT}/${AI_REQUEST_LIMIT} requests used today. Resets at midnight. You have ${getRemainingAiRequests()} remaining.`)
       return
     }
 
@@ -445,33 +462,45 @@ export default function FinPilotApp() {
 
     try {
       const context = buildFinancialContext(currency, transactions, budgets, recurring, goals)
+      const currentCount = getAiRequestCount()
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-ai-request-count': String(currentCount),
+      }
+      if (isEnvMode) headers['x-use-env-key'] = 'true'
+      else headers['x-gemini-api-key'] = geminiKey
+
       const res = await fetch('/api/agent', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': geminiKey,
-        },
+        headers,
         body: JSON.stringify({
           question: promptQuestion,
           mode: 'qa',
-          apiKey: geminiKey,
+          apiKey: isEnvMode ? undefined : geminiKey,
+          useEnvKey: isEnvMode,
           financialContext: context,
         }),
       })
 
       const data = await res.json()
       if (!res.ok || data.error) {
-        if (data.requiresKey) {
-          setShowGeminiModal(true)
+        if (data.requiresKey) setShowGeminiModal(true)
+        if (data.limitReached) {
+          setAiRequestCount(getAiRequestCount())
+          throw new Error(data.error)
         }
         throw new Error(data.error || 'Failed to communicate with FinPilot Gemini agent.')
       }
 
+      // Track every successful request (client-side counter)
+      const n = incrementAiRequestCount({ ts: Date.now(), mode: 'qa', questionPreview: promptQuestion.slice(0, 80) })
+      setAiRequestCount(n)
       setAiAnswer(data.answer)
     } catch (err: any) {
       setAiAnswer(err.message || 'The Gemini agent is temporarily unavailable. Check your API key.')
     } finally {
       setAiLoading(false)
+      setAiRequestCount(getAiRequestCount())
     }
   }
 
@@ -517,15 +546,15 @@ export default function FinPilotApp() {
           })}
         </nav>
 
-        {/* Gemini AI Status Card */}
+        {/* Gemini AI Status Card — API config + tracking */}
         <div className="mt-auto rounded-2xl border border-[#dbe6dc] bg-[#eef4ee] p-4">
           <div className="mb-2 flex items-center justify-between">
             <div className="flex size-7 items-center justify-center rounded-lg bg-white text-[#24463e] shadow-2xs">
               <Bot className="size-4" />
             </div>
-            {geminiKey ? (
+            {geminiKey || useEnvKey ? (
               <span className="flex items-center gap-1 rounded-full bg-[#e0eee2] px-2 py-0.5 text-[10px] font-semibold text-[#24463e]">
-                <CheckCircle2 className="size-3 text-[#24463e]" /> Gemini 2.5
+                <CheckCircle2 className="size-3 text-[#24463e]" /> {useEnvKey ? '.env' : 'Gemini 2.5'}
               </span>
             ) : (
               <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
@@ -535,14 +564,36 @@ export default function FinPilotApp() {
           </div>
           <p className="text-xs font-semibold text-[#24463e]">Gemini Financial Copilot</p>
           <p className="mt-0.5 text-[11px] leading-relaxed text-[#59695f]">
-            Grounded in your real transactions and budgets.
+            {useEnvKey ? 'Using app default .env key — same connection.' : 'Grounded in your real transactions and budgets.'}
           </p>
+          {/* Request tracking */}
+          <div className="mt-2 rounded-lg bg-white border border-[#dbe6dc] px-2 py-1.5">
+            <div className="flex items-center justify-between text-[10px] font-semibold text-[#24463e]">
+              <span>AI Requests</span><span>{aiRequestCount}/{AI_REQUEST_LIMIT} · {Math.max(0, AI_REQUEST_LIMIT - aiRequestCount)} left</span>
+            </div>
+            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[#eef4ee]">
+              <div className="h-full bg-[#24463e] transition-all" style={{ width: `${Math.min(100, (aiRequestCount / AI_REQUEST_LIMIT) * 100)}%` }} />
+            </div>
+          </div>
           <button
             onClick={() => setShowGeminiModal(true)}
             className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-semibold text-[#24463e] hover:underline"
           >
-            {geminiKey ? 'Manage Gemini Key →' : 'Connect Gemini API Key →'}
+            {geminiKey || useEnvKey ? 'Manage API Config →' : 'Connect Gemini API Key →'}
           </button>
+          {/* New button — reuses existing onboarding modal / connection */}
+          <button
+            onClick={() => {
+              const next = !useEnvKey
+              setUseEnvKey(next)
+              setStoredUseEnvKey(next)
+              setShowGeminiModal(true)
+            }}
+            className={`mt-1.5 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold transition ${useEnvKey ? 'border-[#24463e] bg-[#24463e] text-white' : 'border-[#dbe6dc] bg-white text-[#24463e] hover:bg-[#f2f8f4]'}`}
+          >
+            {useEnvKey ? '✓ Using .env Key (15/day)' : 'Use .env Key (App Default)'}
+          </button>
+          <p className="mt-1 text-[10px] text-[#8aa094]">Tracks every request · capped at 15/day (client + server).</p>
         </div>
 
         {/* User Account / Session Profile */}
@@ -774,17 +825,24 @@ export default function FinPilotApp() {
             />
           )}
 
-          {/* Docked AI Copilot Assistant Widget */}
+          {/* Docked AI Copilot Assistant Widget — with 15/day tracking */}
           <section className="mt-8 rounded-2xl border border-[#dce8df] bg-[#eaf3ed] p-5 sm:p-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-center">
               <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#d6e7da] text-[#24463e]">
                 <Bot className="size-5" />
               </div>
               <div className="flex-1">
-                <p className="text-sm font-semibold text-[#1d2d28]">Ask FinPilot anything about your money</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-[#1d2d28]">Ask FinPilot anything about your money</p>
+                  <span className="rounded-full bg-white border border-[#dbe6dc] px-2 py-0.5 text-[10px] font-semibold text-[#24463e]">{aiRequestCount}/{AI_REQUEST_LIMIT} · {Math.max(0, AI_REQUEST_LIMIT - aiRequestCount)} left</span>
+                  {useEnvKey && <span className="rounded-full bg-[#24463e] px-2 py-0.5 text-[10px] font-semibold text-white">.env key</span>}
+                </div>
                 <p className="mt-0.5 text-xs text-[#6e7d74]">
-                  Powered by Google Gemini 2.5 Flash · grounded in your live transactions, budgets, and goals.
+                  Powered by Google Gemini 2.5 Flash · grounded in your live transactions, budgets, and goals. Limit {AI_REQUEST_LIMIT}/day tracked.
                 </p>
+                <div className="mt-1.5 h-1.5 w-full max-w-[260px] overflow-hidden rounded-full bg-white border border-[#dbe6dc]">
+                  <div className="h-full bg-[#24463e] transition-all" style={{ width: `${Math.min(100, (aiRequestCount / AI_REQUEST_LIMIT) * 100)}%` }} />
+                </div>
               </div>
 
               <form
@@ -799,16 +857,18 @@ export default function FinPilotApp() {
                   <input
                     value={aiQuestion}
                     onChange={e => setAiQuestion(e.target.value)}
-                    placeholder="Where did I spend the most this month?"
-                    className="min-w-0 flex-1 bg-transparent py-2.5 text-xs outline-none placeholder:text-[#a1aaa4]"
+                    placeholder={aiRequestCount >= AI_REQUEST_LIMIT ? 'Limit reached — resets at midnight' : 'Where did I spend the most this month?'}
+                    disabled={aiRequestCount >= AI_REQUEST_LIMIT}
+                    className="min-w-0 flex-1 bg-transparent py-2.5 text-xs outline-none placeholder:text-[#a1aaa4] disabled:opacity-60"
                   />
                 </div>
                 <button
                   type="submit"
-                  disabled={aiLoading}
+                  disabled={aiLoading || aiRequestCount >= AI_REQUEST_LIMIT}
+                  title={aiRequestCount >= AI_REQUEST_LIMIT ? '15/day limit reached' : useEnvKey ? 'Will use .env GEMINI_API_KEY' : 'Send to Gemini'}
                   className="rounded-xl bg-[#24463e] px-4 text-xs font-semibold text-white shadow-xs transition hover:bg-[#1b3630] disabled:opacity-60"
                 >
-                  {aiLoading ? 'Thinking…' : 'Ask'}
+                  {aiLoading ? 'Thinking…' : aiRequestCount >= AI_REQUEST_LIMIT ? 'Limit' : 'Ask'}
                 </button>
               </form>
             </div>
@@ -861,12 +921,18 @@ export default function FinPilotApp() {
 
       <GeminiOnboardingModal
         isOpen={showGeminiModal}
-        onClose={() => setShowGeminiModal(false)}
+        onClose={() => {
+          setShowGeminiModal(false)
+          setUseEnvKey(getStoredUseEnvKey())
+          setAiRequestCount(getAiRequestCount())
+        }}
         currentKey={geminiKey}
         currentCurrency={currency}
         onSave={(key, curr, seed) => {
           setGeminiKey(key)
           setCurrency(curr)
+          setUseEnvKey(getStoredUseEnvKey())
+          setAiRequestCount(getAiRequestCount())
           if (seed) {
             seedDataToSupabase()
           }
@@ -893,13 +959,19 @@ export default function FinPilotApp() {
 
       <ProfileModal
         isOpen={showProfileModal}
-        onClose={() => setShowProfileModal(false)}
+        onClose={() => {
+          setShowProfileModal(false)
+          setUseEnvKey(getStoredUseEnvKey())
+          setAiRequestCount(getAiRequestCount())
+        }}
         user={user}
         currentKey={geminiKey}
         currentCurrency={currency}
         onSave={(key, curr) => {
           setGeminiKey(key)
           setCurrency(curr)
+          setUseEnvKey(getStoredUseEnvKey())
+          setAiRequestCount(getAiRequestCount())
         }}
       />
 

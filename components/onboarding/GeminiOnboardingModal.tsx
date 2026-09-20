@@ -1,8 +1,17 @@
 'use client'
 
-import { useState } from 'react'
-import { Sparkles, ExternalLink, KeyRound, Check, Eye, EyeOff, X, HelpCircle, CheckCircle2 } from 'lucide-react'
-import { setStoredGeminiKey, setStoredCurrency } from '@/lib/gemini'
+import { useState, useEffect } from 'react'
+import { Sparkles, ExternalLink, KeyRound, Check, Eye, EyeOff, X, HelpCircle, CheckCircle2, Database, Gauge } from 'lucide-react'
+import {
+  setStoredGeminiKey,
+  setStoredCurrency,
+  getStoredUseEnvKey,
+  setStoredUseEnvKey,
+  getAiRequestCount,
+  getRemainingAiRequests,
+  AI_REQUEST_LIMIT,
+  getAiRequestLog,
+} from '@/lib/gemini'
 import { supabase } from '@/lib/supabase'
 
 interface GeminiOnboardingModalProps {
@@ -37,14 +46,72 @@ export function GeminiOnboardingModal({
   const [testing, setTesting] = useState(false)
   const [testStatus, setTestStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [errorMessage, setErrorMessage] = useState('')
+  const [useEnvKey, setUseEnvKey] = useState(false)
+  const [requestCount, setRequestCount] = useState(0)
+
+  useEffect(() => {
+    if (isOpen) {
+      setApiKey(currentKey)
+      setCurrency(currentCurrency)
+      setUseEnvKey(getStoredUseEnvKey())
+      setRequestCount(getAiRequestCount())
+      setTestStatus('idle')
+      setErrorMessage('')
+    }
+  }, [isOpen, currentKey, currentCurrency])
 
   if (!isOpen) return null
 
+  const remaining = Math.max(0, AI_REQUEST_LIMIT - requestCount)
+
   const handleTestAndSave = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    // If using .env key, reuse existing handler but via server env
+    if (useEnvKey) {
+      setTesting(true)
+      setErrorMessage('')
+      setTestStatus('idle')
+      try {
+        const res = await fetch('/api/agent', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-use-env-key': 'true',
+            'x-ai-request-count': String(getAiRequestCount()),
+          },
+          body: JSON.stringify({
+            question: 'Hello FinPilot! Please confirm with one sentence that the app default API key is working.',
+            financialContext: 'Test connection verification via .env key.',
+            useEnvKey: true,
+          }),
+        })
+        const data = await res.json()
+        if (!res.ok || data.error) throw new Error(data.error || 'Failed to verify .env key.')
+        setTestStatus('success')
+        setStoredUseEnvKey(true)
+        // clear personal key preference when using env
+        setStoredCurrency(currency)
+        const { data: userData } = await supabase.auth.getUser()
+        if (userData?.user) {
+          await supabase.from('profiles').update({ currency }).eq('id', userData.user.id)
+        }
+        setTimeout(() => {
+          onSave('', currency, seedData)
+          onClose()
+        }, 750)
+      } catch (err: any) {
+        setTestStatus('error')
+        setErrorMessage(err.message || 'Verification of .env key failed. Ensure GEMINI_API_KEY is set in .env / Vercel.')
+      } finally {
+        setTesting(false)
+      }
+      return
+    }
+
     const trimmedKey = apiKey.trim()
     if (!trimmedKey) {
-      setErrorMessage('Please enter a valid Gemini API key.')
+      setErrorMessage('Please enter a valid Gemini API key or enable "Use app default key".')
       setTestStatus('error')
       return
     }
@@ -54,10 +121,10 @@ export function GeminiOnboardingModal({
     setTestStatus('idle')
 
     try {
-      // Test key via /api/agent
+      // Test key via /api/agent — reuses existing verification flow
       const res = await fetch('/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-ai-request-count': String(getAiRequestCount()) },
         body: JSON.stringify({
           question: 'Hello FinPilot! Please confirm with one sentence that the API key is working.',
           apiKey: trimmedKey,
@@ -73,6 +140,7 @@ export function GeminiOnboardingModal({
       setTestStatus('success')
       setStoredGeminiKey(trimmedKey)
       setStoredCurrency(currency)
+      setStoredUseEnvKey(false)
 
       // Try updating user profile in Supabase if logged in
       const { data: userData } = await supabase.auth.getUser()
@@ -90,6 +158,44 @@ export function GeminiOnboardingModal({
     } catch (err: any) {
       setTestStatus('error')
       setErrorMessage(err.message || 'Verification failed. Please check that your key is active in Google AI Studio.')
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  // New button handler — reuses same verification logic but forces .env key
+  const handleUseEnvKey = async () => {
+    setUseEnvKey(true)
+    setStoredUseEnvKey(true)
+    // Trigger the same flow as Save & Connect via the form handler
+    // We synthesize a submit: set useEnvKey then call handleTestAndSave programmatically
+    // Do direct verification here to avoid needing form values
+    setTesting(true)
+    setErrorMessage('')
+    setTestStatus('idle')
+    try {
+      const res = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-use-env-key': 'true', 'x-ai-request-count': String(getAiRequestCount()) },
+        body: JSON.stringify({
+          question: 'Hello FinPilot! Confirm .env key works.',
+          financialContext: 'Test via Use Env Key button.',
+          useEnvKey: true,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) throw new Error(data.error || 'Failed to verify .env key.')
+      setTestStatus('success')
+      setStoredCurrency(currency)
+      const { data: userData } = await supabase.auth.getUser()
+      if (userData?.user) await supabase.from('profiles').update({ currency }).eq('id', userData.user.id)
+      setTimeout(() => {
+        onSave('', currency, seedData)
+        onClose()
+      }, 750)
+    } catch (err: any) {
+      setTestStatus('error')
+      setErrorMessage(err.message || 'Verification of .env key failed. Ensure GEMINI_API_KEY is set in .env / Vercel.')
     } finally {
       setTesting(false)
     }
@@ -133,15 +239,62 @@ export function GeminiOnboardingModal({
         </div>
 
         <form onSubmit={handleTestAndSave} className="mt-5 flex flex-col gap-4">
+          {/* API Configuration — new .env toggle + request tracking */}
+          <div className="rounded-xl border border-[#dbe6dc] bg-[#eef4ee] p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Database className="size-3.5 text-[#24463e]" />
+                <p className="text-[11px] font-bold uppercase tracking-widest text-[#24463e]">API Configuration</p>
+              </div>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white border border-[#dbe6dc] px-2 py-0.5 text-[10px] font-semibold text-[#24463e]">
+                <Gauge className="size-3" /> {requestCount}/{AI_REQUEST_LIMIT} used today · {remaining} left
+              </span>
+            </div>
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white border border-[#dbe6dc]">
+              <div className="h-full bg-[#24463e] transition-all" style={{ width: `${Math.min(100, (requestCount / AI_REQUEST_LIMIT) * 100)}%` }} />
+            </div>
+            <p className="mt-1.5 text-[10px] leading-relaxed text-[#5a6b62]">
+              Every AI request is tracked. Limit: <span className="font-semibold text-[#1d2d28]">{AI_REQUEST_LIMIT}/day</span> — resets at midnight. Same limit applies on server (Vercel).
+            </p>
+            <label className="mt-2 flex items-start gap-2.5 cursor-pointer rounded-lg bg-white border border-[#dbe6dc] p-2.5">
+              <input
+                type="checkbox"
+                checked={useEnvKey}
+                onChange={e => {
+                  const v = e.target.checked
+                  setUseEnvKey(v)
+                  setStoredUseEnvKey(v)
+                  setTestStatus('idle')
+                  setErrorMessage('')
+                }}
+                className="mt-0.5 size-4 rounded text-[#24463e] focus:ring-[#24463e]"
+              />
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-[#24463e]">Use app default API key (.env) — recommended on Vercel</p>
+                <p className="text-[11px] text-[#6e7d74]">When checked, requests use <code className="rounded bg-[#f6f7f2] px-1 py-0.5 font-mono text-[10px]">GEMINI_API_KEY</code> from <code className="rounded bg-[#f6f7f2] px-1 py-0.5 font-mono text-[10px]">.env</code> / Vercel env instead of your personal key. Existing AI connection is reused.</p>
+              </div>
+            </label>
+            {/* New button that reuses existing verification flow */}
+            <button
+              type="button"
+              onClick={handleUseEnvKey}
+              disabled={testing || testStatus === 'success'}
+              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#24463e] bg-white px-3 py-2 text-xs font-semibold text-[#24463e] hover:bg-[#f2f8f4] disabled:opacity-50"
+            >
+              <Database className="size-3.5" /> Use App Default Key (.env) — reuses existing connection
+            </button>
+          </div>
+
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-[#31443b]">
-              Step 2: Paste your Gemini API Key
+              Step 2: Paste your Gemini API Key {useEnvKey && <span className="font-normal text-[#8aa094]">(disabled — using .env key)</span>}
             </label>
-            <div className="flex items-center rounded-xl border border-[#d6dfd7] bg-[#fafbf9] px-3 py-2.5 focus-within:border-[#24463e] focus-within:bg-white">
+            <div className={`flex items-center rounded-xl border bg-[#fafbf9] px-3 py-2.5 focus-within:border-[#24463e] focus-within:bg-white ${useEnvKey ? 'opacity-60 border-[#d6dfd7]' : 'border-[#d6dfd7]'}`}>
               <KeyRound className="size-4 text-[#8a968e]" />
               <input
                 type={showKey ? 'text' : 'password'}
-                required
+                required={!useEnvKey}
+                disabled={useEnvKey}
                 placeholder="AIzaSy..."
                 value={apiKey}
                 onChange={e => {
@@ -149,18 +302,19 @@ export function GeminiOnboardingModal({
                   setTestStatus('idle')
                   setErrorMessage('')
                 }}
-                className="mx-2 flex-1 bg-transparent text-xs text-[#1d2d28] outline-none placeholder:text-[#a0aaa2]"
+                className="mx-2 flex-1 bg-transparent text-xs text-[#1d2d28] outline-none placeholder:text-[#a0aaa2] disabled:cursor-not-allowed"
               />
               <button
                 type="button"
+                disabled={useEnvKey}
                 onClick={() => setShowKey(!showKey)}
-                className="text-[#8a968e] hover:text-[#24463e]"
+                className="text-[#8a968e] hover:text-[#24463e] disabled:opacity-40"
               >
                 {showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
               </button>
             </div>
             <p className="mt-1 text-[10px] text-[#8a968e]">
-              Your key is saved securely in your browser and used exclusively for your FinPilot queries.
+              Your key is saved securely in your browser and used exclusively for your FinPilot queries. Toggle “.env” above to use the server’s <code className="font-mono">GEMINI_API_KEY</code>.
             </p>
           </div>
 

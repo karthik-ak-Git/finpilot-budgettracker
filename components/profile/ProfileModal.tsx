@@ -15,7 +15,14 @@ import {
   EyeOff,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import { setStoredGeminiKey, setStoredCurrency } from '@/lib/gemini'
+import {
+  setStoredGeminiKey,
+  setStoredCurrency,
+  getStoredUseEnvKey,
+  setStoredUseEnvKey,
+  getAiRequestCount,
+  AI_REQUEST_LIMIT,
+} from '@/lib/gemini'
 
 interface ProfileModalProps {
   isOpen: boolean
@@ -53,6 +60,8 @@ export function ProfileModal({
   const [showKey, setShowKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+  const [useEnvKey, setUseEnvKey] = useState(false)
+  const [requestCount, setRequestCount] = useState(0)
 
   useEffect(() => {
     if (isOpen) {
@@ -60,6 +69,8 @@ export function ProfileModal({
       setGeminiKey(currentKey)
       setCurrency(currentCurrency)
       setStatus(null)
+      setUseEnvKey(getStoredUseEnvKey())
+      setRequestCount(getAiRequestCount())
     }
   }, [isOpen, user, currentKey, currentCurrency])
 
@@ -69,8 +80,14 @@ export function ProfileModal({
     setSaving(true)
     setStatus(null)
     try {
-      // Persist to localStorage
-      setStoredGeminiKey(geminiKey)
+      // Persist to localStorage — respects .env toggle (reuses existing connection when checked)
+      if (useEnvKey) setStoredUseEnvKey(true)
+      else setStoredUseEnvKey(false)
+      if (!useEnvKey) setStoredGeminiKey(geminiKey)
+      else {
+        // when using env, keep personal key stored but mark preference
+        if (geminiKey.trim()) setStoredGeminiKey(geminiKey.trim())
+      }
       setStoredCurrency(currency)
 
       if (user) {
@@ -87,15 +104,15 @@ export function ProfileModal({
               id: user.id,
               full_name: displayName,
               currency,
-              gemini_api_key: geminiKey,
+              gemini_api_key: useEnvKey ? null : geminiKey || null,
               updated_at: new Date().toISOString(),
             },
             { onConflict: 'id' }
           )
       }
 
-      onSave(geminiKey, currency)
-      setStatus({ type: 'success', msg: 'Profile saved successfully!' })
+      onSave(useEnvKey ? '' : geminiKey, currency)
+      setStatus({ type: 'success', msg: useEnvKey ? 'Profile saved — using app default .env key (15 req/day).' : 'Profile saved successfully!' })
       setTimeout(onClose, 1200)
     } catch (err: any) {
       setStatus({ type: 'error', msg: err.message || 'Failed to save profile.' })
@@ -187,23 +204,44 @@ export function ProfileModal({
             </select>
           </div>
 
+          {/* API Configuration — .env toggle + tracking */}
+          <div className="rounded-xl border border-[#dbe6dc] bg-[#eef4ee] p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-bold uppercase tracking-widest text-[#24463e]">API Configuration</p>
+              <span className="rounded-full bg-white border border-[#dbe6dc] px-2 py-0.5 text-[10px] font-semibold text-[#24463e]">{requestCount}/{AI_REQUEST_LIMIT} used · {Math.max(0, AI_REQUEST_LIMIT - requestCount)} left</span>
+            </div>
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white border border-[#dbe6dc]">
+              <div className="h-full bg-[#24463e] transition-all" style={{ width: `${Math.min(100, (requestCount / AI_REQUEST_LIMIT) * 100)}%` }} />
+            </div>
+            <label className="mt-2 flex items-start gap-2.5 cursor-pointer rounded-lg bg-white border border-[#dbe6dc] p-2">
+              <input type="checkbox" checked={useEnvKey} onChange={e => setUseEnvKey(e.target.checked)} className="mt-0.5 size-4 rounded text-[#24463e]" />
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-[#24463e]">Use app default key (.env) — 15 req/day</p>
+                <p className="text-[11px] text-[#6e7d74]">Reuses existing AI connection via <code className="font-mono bg-[#f6f7f2] px-1 rounded">GEMINI_API_KEY</code> from .env / Vercel env.</p>
+              </div>
+            </label>
+            <button type="button" onClick={() => setUseEnvKey(true)} className="mt-2 w-full rounded-xl border border-[#24463e] bg-white px-3 py-2 text-xs font-semibold text-[#24463e] hover:bg-[#f2f8f4]">Use App Default Key (.env) — reuses existing connection</button>
+          </div>
+
           {/* Gemini API Key */}
           <div>
             <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-[#536159]">
-              <Key className="size-3.5" /> Gemini API Key
+              <Key className="size-3.5" /> Gemini API Key {useEnvKey && <span className="font-normal text-[#8aa094]">(using .env — input disabled)</span>}
             </label>
             <div className="relative">
               <input
                 type={showKey ? 'text' : 'password'}
                 value={geminiKey}
+                disabled={useEnvKey}
                 onChange={e => setGeminiKey(e.target.value)}
                 placeholder="AIza…"
-                className="w-full rounded-xl border border-[#dce5dc] bg-[#fafcfa] px-3 py-2.5 pr-10 text-sm text-[#1d2d28] placeholder:text-[#a8b5a4] focus:border-[#24463e] focus:outline-none"
+                className="w-full rounded-xl border border-[#dce5dc] bg-[#fafcfa] px-3 py-2.5 pr-10 text-sm text-[#1d2d28] placeholder:text-[#a8b5a4] focus:border-[#24463e] focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
               />
               <button
                 type="button"
+                disabled={useEnvKey}
                 onClick={() => setShowKey(v => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#89948d] hover:text-[#1d2d28]"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#89948d] hover:text-[#1d2d28] disabled:opacity-40"
               >
                 {showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
               </button>

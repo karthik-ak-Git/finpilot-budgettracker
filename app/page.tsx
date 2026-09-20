@@ -1,912 +1,532 @@
-'use client'
-
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import Link from 'next/link'
 import {
+  Sparkles,
   LayoutDashboard,
   Receipt,
-  Repeat2,
   BarChart3,
+  Repeat2,
   Target,
   FileText,
-  Sparkles,
-  KeyRound,
-  LogOut,
-  LogIn,
-  User as UserIcon,
-  Search,
   Bot,
-  CircleHelp,
-  Home,
   Upload,
+  ShieldCheck,
+  Zap,
+  Database,
   FileSpreadsheet,
-  AlertCircle,
+  TrendingUp,
+  Wallet,
+  Brain,
+  Lock,
+  ArrowRight,
+  Check,
   CheckCircle2,
+  Play,
+  Mail,
+  ChevronRight,
+  CircleHelp,
+  Layers,
+  PiggyBank,
+  CalendarDays,
+  Search,
+  LineChart,
+  ArrowUpRight,
 } from 'lucide-react'
 
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
-import { Transaction, Budget, RecurringItem, Goal } from '@/lib/types'
-import {
-  getStoredGeminiKey,
-  setStoredGeminiKey,
-  getStoredCurrency,
-  setStoredCurrency,
-  buildFinancialContext,
-} from '@/lib/gemini'
-import {
-  sampleTransactions,
-  sampleBudgets,
-  sampleRecurring,
-  sampleGoals,
-} from '@/lib/sampleData'
-
-// Modular Components
-import { OverviewTab } from '@/components/dashboard/OverviewTab'
-import { TransactionsTab } from '@/components/transactions/TransactionsTab'
-import { BudgetsTab } from '@/components/budgets/BudgetsTab'
-import { RecurringTab } from '@/components/recurring/RecurringTab'
-import { GoalsTab } from '@/components/goals/GoalsTab'
-import { ReportsTab } from '@/components/reports/ReportsTab'
-
-import { AuthModal } from '@/components/auth/AuthModal'
-import { GeminiOnboardingModal } from '@/components/onboarding/GeminiOnboardingModal'
-import { TransactionModal } from '@/components/transactions/TransactionModal'
-import { CsvImportModal } from '@/components/import/CsvImportModal'
-import { ProfileModal } from '@/components/profile/ProfileModal'
-import { AppExplorerModal } from '@/components/explorer/AppExplorerModal'
-
-
-const navItems = [
-  { id: 'Overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'Transactions', label: 'Transactions', icon: Receipt },
-  { id: 'Budgets', label: 'Budgets', icon: BarChart3 },
-  { id: 'Recurring', label: 'Recurring', icon: Repeat2 },
-  { id: 'Goals', label: 'Goals', icon: Target },
-  { id: 'Reports', label: 'Reports', icon: FileText },
-]
-
-export default function FinPilotApp() {
-  const [activeTab, setActiveTab] = useState('Overview')
-  const [user, setUser] = useState<any>(null)
-  const [geminiKey, setGeminiKey] = useState('')
-  const [currency, setCurrency] = useState('$')
-
-  // Financial Data State
-  const [transactions, setTransactions] = useState<Transaction[]>([])
-  const [budgets, setBudgets] = useState<Budget[]>([])
-  const [recurring, setRecurring] = useState<RecurringItem[]>([])
-  const [goals, setGoals] = useState<Goal[]>([])
-  const [loadingData, setLoadingData] = useState(true)
-
-  // Modals State
-  const [showAuthModal, setShowAuthModal] = useState(false)
-  const [showGeminiModal, setShowGeminiModal] = useState(false)
-  const [showTransactionModal, setShowTransactionModal] = useState(false)
-  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
-  const [showCsvModal, setShowCsvModal] = useState(false)
-  const [showProfileModal, setShowProfileModal] = useState(false)
-  const [showExplorerModal, setShowExplorerModal] = useState(false)
-
-
-  // Floating AI Chat State
-  const [aiQuestion, setAiQuestion] = useState('')
-  const [aiAnswer, setAiAnswer] = useState('')
-  const [aiLoading, setAiLoading] = useState(false)
-
-  // Initialize Auth & Storage
-  useEffect(() => {
-    const key = getStoredGeminiKey()
-    const curr = getStoredCurrency()
-    if (key) setGeminiKey(key)
-    if (curr) setCurrency(curr)
-
-    // Check Supabase Auth
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user)
-    })
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_, session) => {
-      setUser(session?.user || null)
-    })
-
-    return () => {
-      authListener.subscription.unsubscribe()
-    }
-  }, [])
-
-  // Auto-prompt onboarding if no Gemini key found
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (!getStoredGeminiKey()) {
-        setShowGeminiModal(true)
-      }
-    }, 1200)
-    return () => clearTimeout(timer)
-  }, [])
-
-  // Fetch live data from Supabase (or fallback to local sample data)
-  const fetchData = useCallback(async () => {
-    setLoadingData(true)
-    try {
-      if (user) {
-        // Fetch user profile
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('currency, gemini_api_key')
-          .eq('id', user.id)
-          .single()
-
-        if (profile?.currency) {
-          setCurrency(profile.currency)
-          setStoredCurrency(profile.currency)
-        }
-        if (profile?.gemini_api_key && !geminiKey) {
-          setGeminiKey(profile.gemini_api_key)
-          setStoredGeminiKey(profile.gemini_api_key)
-        }
-
-        // Fetch user's transactions
-        const { data: txData } = await supabase
-          .from('transactions')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('date', { ascending: false })
-
-        // Fetch user's budgets
-        const { data: bData } = await supabase
-          .from('budgets')
-          .select('*')
-          .eq('user_id', user.id)
-
-        // Fetch user's recurring
-        const { data: rData } = await supabase
-          .from('recurring')
-          .select('*')
-          .eq('user_id', user.id)
-
-        // Fetch user's goals
-        const { data: gData } = await supabase
-          .from('goals')
-          .select('*')
-          .eq('user_id', user.id)
-
-        setTransactions(txData || [])
-        setBudgets(bData || [])
-        setRecurring(rData || [])
-        setGoals(gData || [])
-      } else {
-        // Local state initialization for non-logged-in demo mode
-        const localTx = localStorage.getItem('finpilot_local_transactions')
-        if (localTx) {
-          try {
-            setTransactions(JSON.parse(localTx))
-            setBudgets(JSON.parse(localStorage.getItem('finpilot_local_budgets') || '[]'))
-            setRecurring(JSON.parse(localStorage.getItem('finpilot_local_recurring') || '[]'))
-            setGoals(JSON.parse(localStorage.getItem('finpilot_local_goals') || '[]'))
-          } catch {
-            seedSampleDataLocally()
-          }
-        } else {
-          seedSampleDataLocally()
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching FinPilot data:', err)
-    } finally {
-      setLoadingData(false)
-    }
-  }, [user, geminiKey])
-
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
-
-  // Helper to seed sample data locally or in Supabase
-  const seedSampleDataLocally = () => {
-    const formattedTx: Transaction[] = sampleTransactions.map((t, idx) => ({
-      ...t,
-      id: `local-tx-${idx}`,
-    }))
-    const formattedB: Budget[] = sampleBudgets.map((b, idx) => ({
-      ...b,
-      id: `local-b-${idx}`,
-    }))
-    const formattedR: RecurringItem[] = sampleRecurring.map((r, idx) => ({
-      ...r,
-      id: `local-r-${idx}`,
-    }))
-    const formattedG: Goal[] = sampleGoals.map((g, idx) => ({
-      ...g,
-      id: `local-g-${idx}`,
-    }))
-
-    setTransactions(formattedTx)
-    setBudgets(formattedB)
-    setRecurring(formattedR)
-    setGoals(formattedG)
-
-    localStorage.setItem('finpilot_local_transactions', JSON.stringify(formattedTx))
-    localStorage.setItem('finpilot_local_budgets', JSON.stringify(formattedB))
-    localStorage.setItem('finpilot_local_recurring', JSON.stringify(formattedR))
-    localStorage.setItem('finpilot_local_goals', JSON.stringify(formattedG))
-  }
-
-  // Handle Seeding to Supabase
-  const seedDataToSupabase = async () => {
-    if (!user) {
-      seedSampleDataLocally()
-      return
-    }
-    try {
-      const txToInsert = sampleTransactions.map(t => ({ ...t, user_id: user.id }))
-      const bToInsert = sampleBudgets.map(b => ({ ...b, user_id: user.id }))
-      const rToInsert = sampleRecurring.map(r => ({ ...r, user_id: user.id }))
-      const gToInsert = sampleGoals.map(g => ({ ...g, user_id: user.id }))
-
-      await supabase.from('transactions').insert(txToInsert)
-      await supabase.from('budgets').insert(bToInsert)
-      await supabase.from('recurring').insert(rToInsert)
-      await supabase.from('goals').insert(gToInsert)
-      fetchData()
-    } catch (err) {
-      console.error('Error seeding data to Supabase:', err)
-    }
-  }
-
-  // --- Transaction Handlers ---
-  const handleSaveTransaction = async (data: Omit<Transaction, 'id'>, id?: string) => {
-    if (user) {
-      if (id) {
-        const { error } = await supabase.from('transactions').update(data).eq('id', id)
-        if (error) throw error
-      } else {
-        const { error } = await supabase.from('transactions').insert([{ ...data, user_id: user.id }])
-        if (error) throw error
-      }
-      fetchData()
-    } else {
-      if (id) {
-        const updated = transactions.map(t => (t.id === id ? { ...data, id } : t))
-        setTransactions(updated)
-        localStorage.setItem('finpilot_local_transactions', JSON.stringify(updated))
-      } else {
-        const newTx: Transaction = { ...data, id: `local-tx-${Date.now()}` }
-        const updated = [newTx, ...transactions]
-        setTransactions(updated)
-        localStorage.setItem('finpilot_local_transactions', JSON.stringify(updated))
-      }
-    }
-  }
-
-  const handleDeleteTransaction = async (id: string) => {
-    if (user) {
-      const { error } = await supabase.from('transactions').delete().eq('id', id)
-      if (error) throw error
-      setTransactions(prev => prev.filter(t => t.id !== id))
-    } else {
-      const updated = transactions.filter(t => t.id !== id)
-      setTransactions(updated)
-      localStorage.setItem('finpilot_local_transactions', JSON.stringify(updated))
-    }
-  }
-
-  const handleBatchImportCsv = async (newTx: Omit<Transaction, 'id'>[]) => {
-    if (user) {
-      const records = newTx.map(t => ({ ...t, user_id: user.id }))
-      const { error } = await supabase.from('transactions').insert(records)
-      if (error) throw error
-      fetchData()
-    } else {
-      const formatted: Transaction[] = newTx.map((t, idx) => ({
-        ...t,
-        id: `local-import-${Date.now()}-${idx}`,
-      }))
-      const updated = [...formatted, ...transactions]
-      setTransactions(updated)
-      localStorage.setItem('finpilot_local_transactions', JSON.stringify(updated))
-    }
-  }
-
-  // --- Budget Handlers ---
-  const handleSaveBudget = async (data: Omit<Budget, 'id'>, id?: string) => {
-    if (user) {
-      if (id) {
-        const { error } = await supabase.from('budgets').update(data).eq('id', id)
-        if (error) throw error
-      } else {
-        const { error } = await supabase
-          .from('budgets')
-          .upsert([{ ...data, user_id: user.id }], { onConflict: 'user_id, category' })
-        if (error) throw error
-      }
-      fetchData()
-    } else {
-      if (id) {
-        const updated = budgets.map(b => (b.id === id ? { ...data, id } : b))
-        setBudgets(updated)
-        localStorage.setItem('finpilot_local_budgets', JSON.stringify(updated))
-      } else {
-        const newBudget: Budget = { ...data, id: `local-b-${Date.now()}` }
-        const updated = [...budgets.filter(b => b.category !== data.category), newBudget]
-        setBudgets(updated)
-        localStorage.setItem('finpilot_local_budgets', JSON.stringify(updated))
-      }
-    }
-  }
-
-  const handleDeleteBudget = async (id: string) => {
-    if (user) {
-      const { error } = await supabase.from('budgets').delete().eq('id', id)
-      if (error) throw error
-      setBudgets(prev => prev.filter(b => b.id !== id))
-    } else {
-      const updated = budgets.filter(b => b.id !== id)
-      setBudgets(updated)
-      localStorage.setItem('finpilot_local_budgets', JSON.stringify(updated))
-    }
-  }
-
-  // --- Recurring Handlers ---
-  const handleSaveRecurring = async (data: Omit<RecurringItem, 'id'>, id?: string) => {
-    if (user) {
-      if (id) {
-        const { error } = await supabase.from('recurring').update(data).eq('id', id)
-        if (error) throw error
-      } else {
-        const { error } = await supabase.from('recurring').insert([{ ...data, user_id: user.id }])
-        if (error) throw error
-      }
-      fetchData()
-    } else {
-      if (id) {
-        const updated = recurring.map(r => (r.id === id ? { ...data, id } : r))
-        setRecurring(updated)
-        localStorage.setItem('finpilot_local_recurring', JSON.stringify(updated))
-      } else {
-        const newItem: RecurringItem = { ...data, id: `local-r-${Date.now()}` }
-        const updated = [...recurring, newItem]
-        setRecurring(updated)
-        localStorage.setItem('finpilot_local_recurring', JSON.stringify(updated))
-      }
-    }
-  }
-
-  const handleDeleteRecurring = async (id: string) => {
-    if (user) {
-      const { error } = await supabase.from('recurring').delete().eq('id', id)
-      if (error) throw error
-      setRecurring(prev => prev.filter(r => r.id !== id))
-    } else {
-      const updated = recurring.filter(r => r.id !== id)
-      setRecurring(updated)
-      localStorage.setItem('finpilot_local_recurring', JSON.stringify(updated))
-    }
-  }
-
-  // --- Goal Handlers ---
-  const handleSaveGoal = async (data: Omit<Goal, 'id'>, id?: string) => {
-    if (user) {
-      if (id) {
-        const { error } = await supabase.from('goals').update(data).eq('id', id)
-        if (error) throw error
-      } else {
-        const { error } = await supabase.from('goals').insert([{ ...data, user_id: user.id }])
-        if (error) throw error
-      }
-      fetchData()
-    } else {
-      if (id) {
-        const updated = goals.map(g => (g.id === id ? { ...data, id } : g))
-        setGoals(updated)
-        localStorage.setItem('finpilot_local_goals', JSON.stringify(updated))
-      } else {
-        const newGoal: Goal = { ...data, id: `local-g-${Date.now()}` }
-        const updated = [...goals, newGoal]
-        setGoals(updated)
-        localStorage.setItem('finpilot_local_goals', JSON.stringify(updated))
-      }
-    }
-  }
-
-  const handleDeleteGoal = async (id: string) => {
-    if (user) {
-      const { error } = await supabase.from('goals').delete().eq('id', id)
-      if (error) throw error
-      setGoals(prev => prev.filter(g => g.id !== id))
-    } else {
-      const updated = goals.filter(g => g.id !== id)
-      setGoals(updated)
-      localStorage.setItem('finpilot_local_goals', JSON.stringify(updated))
-    }
-  }
-
-  const handleAddGoalFunds = async (goalId: string, currentAmount: number, additional: number) => {
-    const newTotal = currentAmount + additional
-    if (user) {
-      const { error } = await supabase.from('goals').update({ current_amount: newTotal }).eq('id', goalId)
-      if (error) throw error
-      fetchData()
-    } else {
-      const updated = goals.map(g => (g.id === goalId ? { ...g, current_amount: newTotal } : g))
-      setGoals(updated)
-      localStorage.setItem('finpilot_local_goals', JSON.stringify(updated))
-    }
-  }
-
-  // --- Ask Gemini Agent ---
-  const handleAskAgent = async (promptQuestion = aiQuestion) => {
-    if (!promptQuestion.trim()) return
-    if (!geminiKey) {
-      setShowGeminiModal(true)
-      return
-    }
-
-    setAiLoading(true)
-    setAiAnswer('')
-
-    try {
-      const context = buildFinancialContext(currency, transactions, budgets, recurring, goals)
-      const res = await fetch('/api/agent', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': geminiKey,
-        },
-        body: JSON.stringify({
-          question: promptQuestion,
-          mode: 'qa',
-          apiKey: geminiKey,
-          financialContext: context,
-        }),
-      })
-
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        if (data.requiresKey) {
-          setShowGeminiModal(true)
-        }
-        throw new Error(data.error || 'Failed to communicate with FinPilot Gemini agent.')
-      }
-
-      setAiAnswer(data.answer)
-    } catch (err: any) {
-      setAiAnswer(err.message || 'The Gemini agent is temporarily unavailable. Check your API key.')
-    } finally {
-      setAiLoading(false)
-    }
-  }
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    setUser(null)
-    seedSampleDataLocally()
-  }
-
+export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-[#f6f7f2] text-[#1d2d28]">
-      {/* Sidebar Navigation */}
-      <aside className="fixed inset-y-0 left-0 hidden w-[232px] border-r border-[#e4e8df] bg-[#fbfcf8] px-4 py-6 lg:flex lg:flex-col">
-        <div className="flex items-center gap-2 px-3">
-          <div className="grid size-8 place-items-center rounded-xl bg-[#24463e] text-white">
-            <Sparkles className="size-4" />
+    <div className="min-h-screen bg-[#f6f7f2] text-[#1d2d28] selection:bg-[#24463e] selection:text-white">
+      {/* Top Banner */}
+      <div className="bg-[#24463e] px-4 py-2 text-center text-[12px] font-medium text-[#d6e7da]">
+        <span className="inline-flex items-center gap-2">
+          <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold tracking-widest uppercase">New</span>
+          Gemini 2.5 Flash Copilot is live — grounded in your real transactions, budgets & goals.
+          <Link href="/dashboard" className="hidden sm:inline-flex items-center gap-1 font-semibold text-white underline decoration-white/30 underline-offset-4 hover:decoration-white">
+            Open app <ArrowUpRight className="size-3.5" />
+          </Link>
+        </span>
+      </div>
+
+      {/* Navbar */}
+      <header className="sticky top-0 z-40 border-b border-[#e4e8df] bg-[#fbfcf8]/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-[64px] max-w-[1200px] items-center justify-between px-5 sm:px-6">
+          <Link href="/" className="flex items-center gap-2.5">
+            <span className="grid size-8 place-items-center rounded-xl bg-[#24463e] text-white shadow-sm">
+              <Sparkles className="size-4" />
+            </span>
+            <span className="text-[18px] font-semibold tracking-[-0.03em]">FinPilot</span>
+            <span className="hidden sm:inline-flex rounded-full border border-[#dbe6dc] bg-[#eef4ee] px-2 py-0.5 text-[10px] font-bold tracking-widest uppercase text-[#24463e]">AI Finance</span>
+          </Link>
+
+          <nav className="hidden items-center gap-6 text-[13px] font-medium text-[#5a6b62] lg:flex">
+            <a href="#features" className="hover:text-[#1d2d28]">Features</a>
+            <a href="#ai" className="hover:text-[#1d2d28]">AI Copilot</a>
+            <a href="#how-it-works" className="hover:text-[#1d2d28]">How it works</a>
+            <a href="#tech" className="hover:text-[#1d2d28]">Tech</a>
+            <a href="#faq" className="hover:text-[#1d2d28]">FAQ</a>
+          </nav>
+
+          <div className="flex items-center gap-2">
+            <Link href="/dashboard" className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-[#d9e1d8] bg-white px-3.5 py-2 text-[13px] font-semibold text-[#24463e] hover:bg-[#f0f4ed]">
+              <LayoutDashboard className="size-4" /> Dashboard
+            </Link>
+            <Link href="/dashboard" className="inline-flex items-center gap-1.5 rounded-xl bg-[#24463e] px-4 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-[#1b3630]">
+              Open App <ArrowRight className="size-4" />
+            </Link>
           </div>
-          <span className="text-[17px] font-semibold tracking-[-0.03em] text-[#1d2d28]">FinPilot</span>
         </div>
+      </header>
 
-        <p className="mb-2 mt-8 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[#a0aaa2]">
-          Workspace
-        </p>
+      {/* Hero */}
+      <section className="relative overflow-hidden">
+        <div className="absolute inset-0 -z-10 bg-gradient-to-b from-[#eef4ee] via-[#f6f7f2] to-[#f6f7f2]" />
+        <div className="absolute -top-24 right-0 -z-10 size-[700px] rounded-full bg-[#d6e7da]/40 blur-[90px]" />
+        <div className="absolute -bottom-40 -left-40 -z-10 size-[600px] rounded-full bg-[#fff3d6]/60 blur-[90px]" />
 
-        <nav className="flex flex-col gap-1">
-          {navItems.map(item => {
-            const Icon = item.icon
-            const isCurrent = activeTab === item.id
-            return (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition ${
-                  isCurrent
-                    ? 'bg-[#e7efe9] font-semibold text-[#24463e]'
-                    : 'text-[#718078] hover:bg-[#f0f4ed] hover:text-[#1d2d28]'
-                }`}
-              >
-                <Icon className="size-[17px]" strokeWidth={1.8} />
-                {item.label}
-              </button>
-            )
-          })}
-        </nav>
-
-        {/* Gemini AI Status Card */}
-        <div className="mt-auto rounded-2xl border border-[#dbe6dc] bg-[#eef4ee] p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex size-7 items-center justify-center rounded-lg bg-white text-[#24463e] shadow-2xs">
-              <Bot className="size-4" />
-            </div>
-            {geminiKey ? (
-              <span className="flex items-center gap-1 rounded-full bg-[#e0eee2] px-2 py-0.5 text-[10px] font-semibold text-[#24463e]">
-                <CheckCircle2 className="size-3 text-[#24463e]" /> Gemini 2.5
-              </span>
-            ) : (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                Setup Key
-              </span>
-            )}
-          </div>
-          <p className="text-xs font-semibold text-[#24463e]">Gemini Financial Copilot</p>
-          <p className="mt-0.5 text-[11px] leading-relaxed text-[#59695f]">
-            Grounded in your real transactions and budgets.
-          </p>
-          <button
-            onClick={() => setShowGeminiModal(true)}
-            className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-semibold text-[#24463e] hover:underline"
-          >
-            {geminiKey ? 'Manage Gemini Key →' : 'Connect Gemini API Key →'}
-          </button>
-        </div>
-
-        {/* User Account / Session Profile */}
-        <div className="mt-4 border-t border-[#e4e8df] pt-4">
-          {/* Profile row: clickable area (avatar+name) + separate action icon */}
-          <div className="flex items-center gap-2 rounded-xl px-2 py-2 hover:bg-[#f0f4ed] transition">
-            {/* Clicking avatar + name opens profile modal */}
-            <button
-              onClick={() => setShowProfileModal(true)}
-              className="flex min-w-0 flex-1 items-center gap-2 text-left"
-              title="Open Profile & Settings"
-            >
-              <div className="grid size-8 shrink-0 place-items-center rounded-full bg-[#d4e1d4] text-xs font-bold text-[#315646]">
-                {user?.email ? user.email[0].toUpperCase() : 'G'}
-              </div>
-              <div className="min-w-0">
-                <p className="truncate text-xs font-semibold text-[#1d2d28]">
-                  {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Guest Session'}
-                </p>
-                <p className="truncate text-[10px] text-[#89948d]">
-                  {user ? 'Supabase Synchronized' : 'Local Demo Mode'}
-                </p>
-              </div>
-            </button>
-            {/* Sign out / sign in — separate sibling button, never nested */}
-            {user ? (
-              <button
-                onClick={handleSignOut}
-                title="Sign Out"
-                className="rounded-lg p-1.5 text-[#89948d] hover:bg-[#edf2ea] hover:text-red-600"
-              >
-                <LogOut className="size-4" />
-              </button>
-            ) : (
-              <button
-                onClick={() => setShowAuthModal(true)}
-                title="Sign In / Register"
-                className="rounded-lg p-1.5 text-[#24463e] hover:bg-[#edf2ea]"
-              >
-                <LogIn className="size-4" />
-              </button>
-            )}
-          </div>
-          {/* Tour the app */}
-          <button
-            onClick={() => setShowExplorerModal(true)}
-            className="mt-1 flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-[11px] font-medium text-[#748078] hover:bg-[#f0f4ed] hover:text-[#1d2d28] transition"
-          >
-            <CircleHelp className="size-3.5" />
-            Tour the app
-          </button>
-        </div>
-
-      </aside>
-
-      {/* Main Content Area */}
-      <main className="lg:pl-[232px]">
-        {/* Header Bar */}
-        <header className="flex h-[72px] items-center justify-between border-b border-[#e5e8e0] bg-[#fbfcf8] px-5 sm:px-8 lg:px-10">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 text-xs text-[#77847d]">
-              <Home className="size-3.5" /> /
-              <span className="font-semibold text-[#31443b]">{activeTab}</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            {/* Currency Selector */}
-            <button
-              onClick={() => setShowGeminiModal(true)}
-              title="Change Currency & API Key"
-              className="flex items-center gap-1.5 rounded-xl border border-[#dfe5de] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#3a4940] hover:bg-[#f6f9f5]"
-            >
-              <span>{currency}</span>
-              <span className="text-[10px] text-[#849289]">Currency</span>
-            </button>
-
-            {/* Gemini Key Status */}
-            <button
-              onClick={() => setShowGeminiModal(true)}
-              className={`hidden sm:inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
-                geminiKey
-                  ? 'border-[#cfe0d2] bg-[#f2f8f4] text-[#24463e] hover:bg-[#e6f2e8]'
-                  : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
-              }`}
-            >
-              <KeyRound className="size-3.5" />
-              <span>{geminiKey ? 'Gemini AI Connected' : 'Connect Gemini Key'}</span>
-            </button>
-
-            {/* User Auth Button */}
-            {user ? (
-              <div className="flex items-center gap-2 rounded-xl border border-[#e1e6de] bg-white px-2.5 py-1.5 text-xs font-medium">
-                <span className="grid size-6 place-items-center rounded-full bg-[#d4e1d4] text-[10px] font-bold text-[#315646]">
-                  {user.email ? user.email[0].toUpperCase() : 'U'}
-                </span>
-                <span className="hidden sm:inline text-xs font-semibold text-[#1d2d28]">
-                  {user.user_metadata?.full_name || user.email?.split('@')[0]}
-                </span>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowAuthModal(true)}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-[#24463e] px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-[#1b3630]"
-              >
-                <LogIn className="size-3.5" /> Sign In
-              </button>
-            )}
-          </div>
-        </header>
-
-        {/* Workspace Body */}
-        <div className="mx-auto max-w-[1320px] px-5 py-7 sm:px-8 lg:px-10">
-          {/* Page Title & Action Bar */}
-          <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-            <div>
-              <p className="mb-1 text-xs font-medium text-[#89948d]">
-                {new Date().toLocaleDateString('en-US', {
-                  weekday: 'long',
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                })}
-              </p>
-              <h1 className="text-[28px] font-semibold tracking-[-0.04em] text-[#1d2d28]">
-                {activeTab === 'Overview'
-                  ? `Welcome, ${user?.user_metadata?.full_name || 'Jordan'}`
-                  : activeTab}
-              </h1>
-              <p className="mt-0.5 text-xs text-[#748078]">
-                {activeTab === 'Overview'
-                  ? 'Your live financial overview grounded in Supabase data.'
-                  : `Review and manage your real ${activeTab.toLowerCase()} in one place.`}
-              </p>
+        <div className="mx-auto grid max-w-[1200px] gap-10 px-5 py-10 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:py-16">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-[#cde0d1] bg-white px-3 py-1 text-[11px] font-semibold text-[#24463e] shadow-xs">
+              <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+              Live Financial Intelligence • Supabase + Gemini
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowCsvModal(true)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-[#d9e1d8] bg-white px-3.5 py-2 text-xs font-semibold text-[#315646] shadow-xs hover:bg-[#f7faf6]"
-              >
-                <Upload className="size-3.5" /> Import Statement
-              </button>
-              <button
-                onClick={() => {
-                  setEditingTransaction(null)
-                  setShowTransactionModal(true)
-                }}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-[#24463e] px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-[#1b3630]"
-              >
-                + Add Transaction
-              </button>
-            </div>
-          </div>
+            <h1 className="mt-5 text-[34px] font-semibold leading-[0.95] tracking-[-0.04em] sm:text-[44px] lg:text-[52px]">
+              Understand your money
+              <span className="block bg-gradient-to-r from-[#24463e] to-[#5b8a7a] bg-clip-text text-transparent">with AI that knows</span>
+              <span className="block">your actual numbers.</span>
+            </h1>
 
-          {/* Render Active Tab */}
-          {activeTab === 'Overview' && (
-            <OverviewTab
-              transactions={transactions}
-              budgets={budgets}
-              recurring={recurring}
-              goals={goals}
-              currency={currency}
-              onNavigate={setActiveTab}
-              onAddTransaction={() => {
-                setEditingTransaction(null)
-                setShowTransactionModal(true)
-              }}
-              onImportCsv={() => setShowCsvModal(true)}
-              onGenerateReport={() => setActiveTab('Reports')}
-            />
-          )}
+            <p className="mt-4 max-w-[56ch] text-[14px] leading-relaxed text-[#5a6b62] sm:text-[15px]">
+              FinPilot is a modern personal finance cockpit — not a mock dashboard. Import your bank CSV, track every transaction, watch budgets live, and ask a Gemini 2.5 Flash copilot grounded in your real cash flow, budgets, subscriptions and goals.
+            </p>
 
-          {activeTab === 'Transactions' && (
-            <TransactionsTab
-              transactions={transactions}
-              currency={currency}
-              onAdd={() => {
-                setEditingTransaction(null)
-                setShowTransactionModal(true)
-              }}
-              onImport={() => setShowCsvModal(true)}
-              onEdit={tx => {
-                setEditingTransaction(tx)
-                setShowTransactionModal(true)
-              }}
-              onDelete={handleDeleteTransaction}
-            />
-          )}
-
-          {activeTab === 'Budgets' && (
-            <BudgetsTab
-              budgets={budgets}
-              transactions={transactions}
-              currency={currency}
-              onSaveBudget={handleSaveBudget}
-              onDeleteBudget={handleDeleteBudget}
-            />
-          )}
-
-          {activeTab === 'Recurring' && (
-            <RecurringTab
-              recurring={recurring}
-              currency={currency}
-              onSaveRecurring={handleSaveRecurring}
-              onDeleteRecurring={handleDeleteRecurring}
-            />
-          )}
-
-          {activeTab === 'Goals' && (
-            <GoalsTab
-              goals={goals}
-              currency={currency}
-              onSaveGoal={handleSaveGoal}
-              onDeleteGoal={handleDeleteGoal}
-              onAddFunds={handleAddGoalFunds}
-            />
-          )}
-
-          {activeTab === 'Reports' && (
-            <ReportsTab
-              transactions={transactions}
-              budgets={budgets}
-              recurring={recurring}
-              goals={goals}
-              currency={currency}
-              geminiKey={geminiKey}
-              onOpenGeminiModal={() => setShowGeminiModal(true)}
-            />
-          )}
-
-          {/* Docked AI Copilot Assistant Widget */}
-          <section className="mt-8 rounded-2xl border border-[#dce8df] bg-[#eaf3ed] p-5 sm:p-6">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center">
-              <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#d6e7da] text-[#24463e]">
-                <Bot className="size-5" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-[#1d2d28]">Ask FinPilot anything about your money</p>
-                <p className="mt-0.5 text-xs text-[#6e7d74]">
-                  Powered by Google Gemini 2.5 Flash · grounded in your live transactions, budgets, and goals.
-                </p>
-              </div>
-
-              <form
-                onSubmit={e => {
-                  e.preventDefault()
-                  handleAskAgent()
-                }}
-                className="flex w-full gap-2 md:max-w-[480px]"
-              >
-                <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-[#d3e1d5] bg-white px-3 focus-within:border-[#24463e]">
-                  <Search className="size-4 shrink-0 text-[#9aa79e]" />
-                  <input
-                    value={aiQuestion}
-                    onChange={e => setAiQuestion(e.target.value)}
-                    placeholder="Where did I spend the most this month?"
-                    className="min-w-0 flex-1 bg-transparent py-2.5 text-xs outline-none placeholder:text-[#a1aaa4]"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={aiLoading}
-                  className="rounded-xl bg-[#24463e] px-4 text-xs font-semibold text-white shadow-xs transition hover:bg-[#1b3630] disabled:opacity-60"
-                >
-                  {aiLoading ? 'Thinking…' : 'Ask'}
-                </button>
-              </form>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link href="/dashboard" className="inline-flex items-center gap-2 rounded-xl bg-[#24463e] px-5 py-3 text-[14px] font-semibold text-white shadow-sm hover:bg-[#1b3630]">
+                <Play className="size-4 fill-white" /> Try FinPilot free
+              </Link>
+              <a href="#features" className="inline-flex items-center gap-2 rounded-xl border border-[#d9e1d8] bg-white px-5 py-3 text-[14px] font-semibold text-[#24463e] hover:bg-[#f0f4ed]">
+                Explore features <ChevronRight className="size-4" />
+              </a>
             </div>
 
-            {/* Quick Prompt Suggestions */}
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-semibold text-[#5c6e63]">Try:</span>
+            <div className="mt-6 flex flex-wrap items-center gap-3 text-[12px] text-[#6e7d74]">
+              <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="size-4 text-emerald-600" /> No credit card</span>
+              <span className="size-1 rounded-full bg-[#cbd5c9]" />
+              <span className="inline-flex items-center gap-1.5"><Lock className="size-3.5" /> RLS-secured by Supabase</span>
+              <span className="size-1 rounded-full bg-[#cbd5c9]" />
+              <span className="inline-flex items-center gap-1.5"><Zap className="size-3.5" /> Guest demo works offline</span>
+            </div>
+
+            <div className="mt-8 grid grid-cols-3 gap-3 sm:gap-4">
               {[
-                'Where did I spend the most?',
-                'Am I over budget in any category?',
-                'What are my total recurring subscriptions?',
-                'How can I save $200 more this month?',
-              ].map(prompt => (
-                <button
-                  key={prompt}
-                  onClick={() => {
-                    setAiQuestion(prompt)
-                    handleAskAgent(prompt)
-                  }}
-                  className="rounded-lg border border-[#cbe0d0] bg-white/70 px-2 py-1 text-[11px] font-medium text-[#315646] hover:bg-white"
-                >
-                  {prompt}
-                </button>
+                { k: '8+', label: 'Bank CSV formats', sub: 'Chase, BofA, Amex...' },
+                { k: '14-day', label: 'Spending pulse', sub: 'Daily activity bars' },
+                { k: '<1.2s', label: 'AI report', sub: 'Gemini 2.5 Flash' },
+              ].map(s => (
+                <div key={s.k} className="rounded-2xl border border-[#e4e8df] bg-white p-3 sm:p-4">
+                  <div className="text-[18px] font-semibold tracking-[-0.03em] text-[#24463e]">{s.k}</div>
+                  <div className="text-[12px] font-semibold">{s.label}</div>
+                  <div className="text-[11px] text-[#7a8a80]">{s.sub}</div>
+                </div>
               ))}
             </div>
+          </div>
 
-            {/* AI Answer Bubble */}
-            {aiAnswer && (
-              <div className="mt-4 flex items-start gap-3 rounded-xl border border-[#d5e4d7] bg-white p-4 text-xs leading-relaxed text-[#31443b] shadow-2xs">
-                <Sparkles className="mt-0.5 size-4 shrink-0 text-[#d09235]" />
-                <div className="flex-1">
-                  <p className="mb-1 font-semibold text-[#24463e]">FinPilot Copilot</p>
-                  <div className="whitespace-pre-wrap">{aiAnswer}</div>
+          {/* Hero Mock */}
+          <div className="relative">
+            <div className="rounded-[24px] border border-[#dde5dd] bg-white p-3 shadow-[0_20px_60px_rgba(36,70,62,0.12)] sm:p-4">
+              {/* Window chrome */}
+              <div className="flex items-center justify-between rounded-xl bg-[#f6f7f2] px-3 py-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-full bg-[#ff5f57]" />
+                  <span className="size-2.5 rounded-full bg-[#ffbd2e]" />
+                  <span className="size-2.5 rounded-full bg-[#28c840]" />
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px] font-medium text-[#8aa094]">
+                  <span className="hidden sm:inline">finpilot.app</span> <ShieldCheck className="size-3.5" /> Secure
+                </div>
+                <div className="hidden sm:flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-[#24463e] border border-[#e4e8df]"><Bot className="size-3.5" /> Gemini 2.5</div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  { label: 'Net Cash Flow', value: '+$1,247', sub: 'This month', color: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+                  { label: 'Total Spend', value: '$2,603', sub: 'vs $4.2k budget', color: 'text-[#24463e] bg-[#eef4ee] border-[#dbe6dc]' },
+                  { label: 'Recurring', value: '$89 /mo', sub: '4 active', color: 'text-[#5a6b62] bg-white border-[#e4e8df]' },
+                  { label: 'Goal Progress', value: '43%', sub: 'Emergency $6.4k/15k', color: 'text-amber-800 bg-amber-50 border-amber-200' },
+                ].map(c => (
+                  <div key={c.label} className={`rounded-2xl border p-3 ${c.color}`}>
+                    <div className="text-[10px] font-bold uppercase tracking-widest opacity-70">{c.label}</div>
+                    <div className="mt-1 text-[16px] font-semibold tracking-[-0.03em]">{c.value}</div>
+                    <div className="text-[11px] opacity-70">{c.sub}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-3 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+                <div className="rounded-2xl border border-[#e4e8df] bg-[#fbfcf8] p-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold">Spending activity</p>
+                    <span className="text-[10px] font-medium text-[#7a8a80]">Last 14 days</span>
+                  </div>
+                  <div className="mt-3 flex items-end gap-1">
+                    {[20, 35, 45, 18, 60, 72, 55, 30, 80, 42, 65, 50, 38, 90].map((h, i) => (
+                      <div key={i} className="flex-1">
+                        <div className={`mx-auto w-full rounded-t-md ${i === 13 ? 'bg-[#24463e]' : 'bg-[#cfe0d2]'}`} style={{ height: `${h}px` }} />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex gap-2 text-[11px]">
+                    <span className="rounded-full bg-white border border-[#e4e8df] px-2 py-0.5 font-medium">Top: Housing 67%</span>
+                    <span className="rounded-full bg-white border border-[#e4e8df] px-2 py-0.5 font-medium">Food 12%</span>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-[#e4e8df] bg-white p-3">
+                  <p className="text-xs font-semibold">Ask FinPilot</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-[#6e7d74]">Powered by Gemini 2.5 Flash — grounded in your live data.</p>
+                  <div className="mt-3 rounded-xl border border-[#d3e1d5] bg-[#f6f7f2] p-2.5 text-[11px]">
+                    <div className="flex items-center gap-1.5 font-semibold text-[#24463e]"><Search className="size-3.5" /> Where did I spend the most?</div>
+                    <div className="mt-1.5 rounded-lg bg-white p-2 leading-relaxed text-[#31443b] border border-[#e4e8df]">
+                      <span className="font-semibold">Housing</span> — $1,750 (67% of spend). You’re at 95% of your $1,850 limit…
+                    </div>
+                  </div>
                 </div>
               </div>
-            )}
-          </section>
+
+              <div className="mt-3 flex items-center justify-between rounded-xl bg-[#24463e] px-3 py-2.5 text-white">
+                <span className="text-xs font-medium">Ready to import your statement?</span>
+                <span className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-[#24463e]">Import CSV <Upload className="size-3.5" /></span>
+              </div>
+            </div>
+
+            <div className="pointer-events-none absolute -right-6 -top-6 hidden rotate-3 rounded-2xl border border-[#e4e8df] bg-white px-3 py-2 text-xs font-semibold shadow-lg lg:flex">
+              <span className="grid size-6 place-items-center rounded-lg bg-amber-100 text-amber-800 mr-2"><PiggyBank className="size-3.5" /></span> Emergency Fund 43% → $15k
+            </div>
+          </div>
         </div>
-      </main>
+      </section>
 
-      {/* Modals */}
-      <AuthModal
-        isOpen={showAuthModal}
-        onClose={() => setShowAuthModal(false)}
-        onSuccess={() => {
-          supabase.auth.getUser().then(({ data }) => setUser(data.user))
-          fetchData()
-        }}
-      />
+      {/* Feature pillars */}
+      <section id="features" className="mx-auto max-w-[1200px] px-5 sm:px-6">
+        <div className="mx-auto max-w-[720px] text-center">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#8aa094]">Everything you need to stay on top of money</p>
+          <h2 className="mt-2 text-[28px] font-semibold tracking-[-0.04em] sm:text-[36px]">A complete finance workspace, not a spreadsheet.</h2>
+          <p className="mt-3 text-[14px] leading-relaxed text-[#5a6b62]">Six focused modules share one live data layer. Every card, chart and AI answer is computed from your actual transactions — no mock filler.</p>
+        </div>
 
-      <GeminiOnboardingModal
-        isOpen={showGeminiModal}
-        onClose={() => setShowGeminiModal(false)}
-        currentKey={geminiKey}
-        currentCurrency={currency}
-        onSave={(key, curr, seed) => {
-          setGeminiKey(key)
-          setCurrency(curr)
-          if (seed) {
-            seedDataToSupabase()
-          }
-        }}
-      />
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[
+            { icon: Receipt, title: 'Transactions Ledger', desc: 'Full CRUD with search, category filters, expense/income toggle, sorting and one-click CSV export. Signed amounts, merchant avatars, mobile-optimized rows.', bullets: ['Create / edit / delete with validation', 'Export finpilot-transactions-YYYY-MM-DD.csv'], accent: 'bg-[#eef4ee] text-[#24463e]' },
+            { icon: FileSpreadsheet, title: 'Bank CSV Importer', desc: 'Drag-and-drop parser with auto column detection (date, merchant, amount, category). Handles Chase, BofA, Amex, Apple Card, Stripe generic.', bullets: ['PapaParse + header regex mapping', '5-row preview before batch insert'], accent: 'bg-amber-50 text-amber-800' },
+            { icon: BarChart3, title: 'Dynamic Budgets', desc: 'Category limits vs live spend for the current month. Color thresholds at 80% / 100%, with “On track / Approaching / Exceeded” states and health ring.', bullets: ['Global budget health card', 'Per-budget progress + delete'], accent: 'bg-[#eef4ee] text-[#24463e]' },
+            { icon: Repeat2, title: 'Recurring & Subscriptions', desc: 'Monthly / yearly / weekly cadence normalized to $/mo. Billing-day countdown, total commitment banner, activate or pause anytime.', bullets: ['Netflix $22.99 · Notion $12 etc.', 'Yearly ÷12 · Weekly ×52/12'], accent: 'bg-blue-50 text-blue-800' },
+            { icon: Target, title: 'Savings Goals', desc: 'Track milestones like Emergency Fund & travel with progress bars, “to go” states and quick Add Funds deposits.', bullets: ['Create with target date (optional)', '+Add Funds → current + additional'], accent: 'bg-emerald-50 text-emerald-800' },
+            { icon: FileText, title: 'Reports & Audit', desc: 'Instant snapshot (income / expenses / net / savings rate) plus a one-click Gemini Monthly Audit with 5 structured sections.', bullets: ['Executive summary → 3 action items', 'Copy report to clipboard'], accent: 'bg-violet-50 text-violet-800' },
+          ].map(f => (
+            <div key={f.title} className="rounded-[20px] border border-[#e4e8df] bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+              <div className={`grid size-9 place-items-center rounded-xl ${f.accent}`}><f.icon className="size-5" /></div>
+              <h3 className="mt-3 text-[15px] font-semibold tracking-[-0.02em]">{f.title}</h3>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-[#5a6b62]">{f.desc}</p>
+              <ul className="mt-3 space-y-1.5">
+                {f.bullets.map(b => (
+                  <li key={b} className="flex items-start gap-1.5 text-[12px] text-[#3a4940]"><Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />{b}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
 
-      <TransactionModal
-        isOpen={showTransactionModal}
-        onClose={() => {
-          setShowTransactionModal(false)
-          setEditingTransaction(null)
-        }}
-        currency={currency}
-        transactionToEdit={editingTransaction}
-        onSave={handleSaveTransaction}
-      />
+        {/* Secondary features */}
+        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+          {[
+            { icon: LayoutDashboard, t: 'Overview Dashboard', d: '4 live stat cards, 14-day bar pulse, top-5 categories, recent activity & observations that flag concentration risk or momentum.' },
+            { icon: ShieldCheck, t: 'Supabase Auth + RLS', d: 'Email/password with auto-refresh, Row Level Security per user on all 5 tables — fully isolated, no cross-reads.' },
+            { icon: Layers, t: 'Dual Persistence', d: 'Guest mode uses localStorage so you can explore instantly. Sign in upgrades to cloud sync with sample-data seeding.' },
+          ].map(x => (
+            <div key={x.t} className="rounded-2xl border border-[#dde5dd] bg-[#fbfcf8] p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold"><x.icon className="size-4 text-[#24463e]" /> {x.t}</div>
+              <p className="mt-1.5 text-[12px] leading-relaxed text-[#5a6b62]">{x.d}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
-      <CsvImportModal
-        isOpen={showCsvModal}
-        onClose={() => setShowCsvModal(false)}
-        currency={currency}
-        onImport={handleBatchImportCsv}
-      />
+      {/* AI Copilot */}
+      <section id="ai" className="mx-auto mt-14 max-w-[1200px] px-5 sm:px-6">
+        <div className="grid gap-6 rounded-[24px] border border-[#dbe6dc] bg-gradient-to-br from-[#eaf3ed] via-[#eef4ee] to-white p-6 sm:p-8 lg:grid-cols-[1.1fr_0.9fr]">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-[#24463e] px-3 py-1 text-[11px] font-bold tracking-widest uppercase text-white"><Bot className="size-3.5" /> Gemini 2.5 Flash Copilot</div>
+            <h2 className="mt-3 text-[26px] font-semibold tracking-[-0.03em] sm:text-[32px]">Grounded answers, not generic advice.</h2>
+            <p className="mt-2 text-[14px] leading-relaxed text-[#3a4940]">Every AI response is built from a deterministic <span className="font-semibold">buildFinancialContext()</span> snapshot — current-month income/expenses, net flow, category totals sorted desc, budget utilization, active recurring, goals progress, and last 6 transactions.</p>
 
-      <ProfileModal
-        isOpen={showProfileModal}
-        onClose={() => setShowProfileModal(false)}
-        user={user}
-        currentKey={geminiKey}
-        currentCurrency={currency}
-        onSave={(key, curr) => {
-          setGeminiKey(key)
-          setCurrency(curr)
-        }}
-      />
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-[#dbe6dc] bg-white p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold"><Search className="size-4 text-[#24463e]" /> Q&A mode</div>
+                <p className="mt-1 text-xs leading-relaxed text-[#5a6b62]">Ask “Am I over budget?” or “How can I save $200?” — the proxy composes your snapshot + question and returns markdown with bold figures.</p>
+                <code className="mt-2 block rounded-lg bg-[#f6f7f2] px-2 py-1 text-[11px]">POST /api/agent {'{mode:"qa"}'}</code>
+              </div>
+              <div className="rounded-2xl border border-[#dbe6dc] bg-white p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold"><FileText className="size-4 text-[#24463e]" /> Report mode</div>
+                <p className="mt-1 text-xs leading-relaxed text-[#5a6b62]">One click generates a 5-section monthly audit: Executive Summary → Observations → Budget Audit → Goals → 3 Actions.</p>
+                <code className="mt-2 block rounded-lg bg-[#f6f7f2] px-2 py-1 text-[11px]">POST /api/agent {'{mode:"report"}'}</code>
+              </div>
+            </div>
 
-      <AppExplorerModal
-        isOpen={showExplorerModal}
-        onClose={() => setShowExplorerModal(false)}
-      />
+            <ul className="mt-5 space-y-2 text-[13px]">
+              {['System instruction: cite actual numbers, markdown, no stock tips, concise & friendly.', 'Temperature 0.3 for reliable, repeatable financial guidance.', 'Key priority: body apiKey → x-gemini-api-key header → GEMINI_API_KEY env.'].map(b => (
+                <li key={b} className="flex gap-2"><Check className="mt-0.5 size-4 shrink-0 text-emerald-600" /><span className="text-[#3a4940]">{b}</span></li>
+              ))}
+            </ul>
+
+            <div className="mt-6 flex flex-wrap gap-2">
+              {['Where did I spend the most?', 'Am I over budget?', 'Recurring total?', 'Save $200 more?'].map(q => (
+                <span key={q} className="rounded-full border border-[#cbe0d0] bg-white px-3 py-1 text-xs font-medium text-[#315646]">“{q}”</span>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-[20px] border border-[#e4e8df] bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold flex items-center gap-2"><Sparkles className="size-4 text-amber-600" /> Prompt preview</p>
+              <span className="rounded-full bg-[#eef4ee] px-2 py-0.5 text-[11px] font-semibold text-[#24463e]">temp 0.3</span>
+            </div>
+            <div className="mt-3 rounded-xl bg-[#0f1e1a] p-4 font-mono text-[11px] leading-relaxed text-[#cde0d6]">
+              <div className="text-[#8aa094]">// financialContext (generated)</div>
+              <div>User Financial Overview:</div>
+              <div>- Currency: $</div>
+              <div>- Total Income: $3,850.00</div>
+              <div>- Total Expenses: $2,603.12</div>
+              <div>- Net: +$1,246.88</div>
+              <div>- Top Categories: Housing $1,750…</div>
+              <div>- Budgets: Housing $1,750/$1,850 (95%)</div>
+              <div className="mt-2 text-[#8aa094]">// systemInstruction enforced</div>
+              <div className="text-amber-200">You are FinPilot — reference real numbers,</div>
+              <div className="text-amber-200">no securities advice, actionable.</div>
+            </div>
+            <div className="mt-3 flex items-center gap-2 rounded-xl bg-[#f6f7f2] p-3 text-xs">
+              <span className="grid size-7 place-items-center rounded-full bg-[#24463e] text-white"><Brain className="size-4" /></span>
+              <div>
+                <div className="font-semibold">Bring your own Gemini key</div>
+                <div className="text-[11px] text-[#6e7d74]">Free from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="underline decoration-[#24463e]/30 underline-offset-2">aistudio.google.com/app/apikey</a> — verified live in onboarding.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* How it works */}
+      <section id="how-it-works" className="mx-auto mt-14 max-w-[1200px] px-5 sm:px-6">
+        <div className="mx-auto max-w-[640px] text-center">
+          <h2 className="text-[26px] font-semibold tracking-[-0.03em]">From CSV to clarity in 3 steps</h2>
+          <p className="mt-2 text-sm text-[#5a6b62]">No bank connection required. You stay in control of your data and your Gemini key.</p>
+        </div>
+        <div className="mt-8 grid gap-4 md:grid-cols-3">
+          {[
+            { step: '01', icon: Upload, title: 'Add your data', desc: 'Import a statement CSV (drag & drop, auto-maps columns) or add transactions manually. Works fully offline as guest via localStorage.' },
+            { step: '02', icon: Wallet, title: 'Watch it come alive', desc: 'Overview computes net flow, 14-day pulse, category breakdown & warnings. Budgets, recurring and goals update live against this month.' },
+            { step: '03', icon: Brain, title: 'Ask & act', desc: 'Type any money question or generate the Monthly Audit. Gemini cites your real figures and suggests 3 concrete next steps.' },
+          ].map(s => (
+            <div key={s.step} className="relative rounded-[20px] border border-[#e4e8df] bg-white p-6">
+              <div className="absolute right-4 top-4 text-[28px] font-bold tracking-[-0.05em] text-[#e4e8df]">{s.step}</div>
+              <div className="grid size-10 place-items-center rounded-xl bg-[#24463e] text-white"><s.icon className="size-5" /></div>
+              <h3 className="mt-4 text-[15px] font-semibold">{s.title}</h3>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-[#5a6b62]">{s.desc}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-[#e4e8df] bg-[#fbfcf8] p-4 sm:flex sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="grid size-8 place-items-center rounded-xl bg-white border border-[#e4e8df] text-[#24463e]"><CalendarDays className="size-4" /></span>
+            <div>
+              <p className="text-sm font-semibold">Guest demo → cloud sync without friction</p>
+              <p className="text-xs text-[#6e7d74]">Explore with sample data, then sign in and optionally seed starter transactions to Supabase.</p>
+            </div>
+          </div>
+          <Link href="/dashboard" className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-[#24463e] px-4 py-2 text-xs font-semibold text-white sm:mt-0">Open Dashboard <ArrowRight className="size-3.5" /></Link>
+        </div>
+      </section>
+
+      {/* App detail specs */}
+      <section className="mx-auto mt-14 max-w-[1200px] px-5 sm:px-6">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="rounded-[20px] border border-[#e4e8df] bg-white p-6">
+            <h3 className="flex items-center gap-2 text-[15px] font-semibold"><TrendingUp className="size-4 text-[#24463e]" /> What you can track</h3>
+            <div className="mt-4 grid grid-cols-2 gap-3 text-[13px]">
+              {[
+                { k: 'Transactions', v: 'Merchant, amount (± by type), category (9), date, detail — with local + Supabase dual write.' },
+                { k: 'Budgets', v: 'Per-category monthly limit, overall health %, remaining / over, editable category + limit.' },
+                { k: 'Recurring', v: 'Name, amount, cadence (M/Y/W), billing day 1-31, category, active toggle.' },
+                { k: 'Goals', v: 'Title, target, current, target date — progress 0-100%, add-funds flow, complete state.' },
+              ].map(x => (
+                <div key={x.k} className="rounded-xl bg-[#f6f7f2] p-3">
+                  <div className="text-xs font-bold uppercase tracking-widest text-[#24463e]">{x.k}</div>
+                  <div className="mt-1 text-xs leading-relaxed text-[#3a4940]">{x.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-[20px] border border-[#e4e8df] bg-[#24463e] p-6 text-white">
+            <h3 className="flex items-center gap-2 text-[15px] font-semibold"><LineChart className="size-4" /> Privacy & security in one glance</h3>
+            <ul className="mt-4 space-y-2.5 text-[13px] leading-relaxed text-[#d6e7da]">
+              <li className="flex gap-2"><ShieldCheck className="mt-0.5 size-4 shrink-0" /> RLS on all 5 tables — <span className="font-semibold text-white">auth.uid() = user_id</span> for every SELECT/INSERT/UPDATE/DELETE.</li>
+              <li className="flex gap-2"><Lock className="mt-0.5 size-4 shrink-0" /> Gemini key stored in localStorage + profiles.gemini_api_key — never logged, only sent as header x-gemini-api-key.</li>
+              <li className="flex gap-2"><Database className="mt-0.5 size-4 shrink-0" /> No stock-picking, no bank scraping — cash-flow and budgeting discipline only.</li>
+              <li className="flex gap-2"><Check className="mt-0.5 size-4 shrink-0" /> CSV sanitized (parseFloat after [^0-9.-]), no eval, no dangerouslySetInnerHTML — answers as whitespace-pre-wrap text.</li>
+            </ul>
+            <div className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-semibold text-[#24463e]">
+              <span className="grid size-4 place-items-center font-mono text-[10px] font-bold">&lt;/&gt;</span> Supabase schema in /supabase/schema.sql
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Tech stack */}
+      <section id="tech" className="mx-auto mt-14 max-w-[1200px] px-5 sm:px-6">
+        <div className="rounded-[24px] border border-[#e4e8df] bg-white p-6 sm:p-8">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#8aa094]">Tech stack — audited from package.json & codebase</p>
+              <h2 className="mt-1 text-[22px] font-semibold tracking-[-0.03em]">Built on a modern, boring, reliable stack.</h2>
+            </div>
+            <Link href="/dashboard" className="inline-flex items-center gap-1.5 rounded-xl border border-[#d9e1d8] bg-[#f6f7f2] px-3 py-2 text-xs font-semibold text-[#24463e]">Live app is at /dashboard <ArrowUpRight className="size-3.5" /></Link>
+          </div>
+
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              { label: 'Framework', val: 'Next.js 16.3.3 (App Router)', sub: 'React 19 · TypeScript 5.7 · pnpm 12.3.4' },
+              { label: 'Styling', val: 'Tailwind CSS v4', sub: 'shadcn · lucide-react · tw-animate-css · Base UI' },
+              { label: 'Data & Auth', val: 'Supabase 2.116', sub: 'PostgreSQL + RLS + Auth (persistSession)' },
+              { label: 'AI Engine', val: 'Gemini 2.5 Flash', sub: '@google/genai 2.23 + Vercel AI SDK 7' },
+              { label: 'CSV', val: 'PapaParse 5.7', sub: 'Auto header regex detection' },
+              { label: 'Analytics', val: '@vercel/analytics 1.6', sub: 'Production only' },
+              { label: 'Config', val: 'next.config.mjs', sub: 'Env fallback loader · unoptimized images' },
+              { label: 'Deployment', val: 'Any Next host', sub: 'Env: NEXT_PUBLIC_SUPABASE_* (+ GEMINI_API_KEY)' },
+            ].map(c => (
+              <div key={c.label} className="rounded-2xl border border-[#eef0eb] bg-[#fbfcf8] p-4">
+                <div className="text-[11px] font-bold uppercase tracking-widest text-[#8aa094]">{c.label}</div>
+                <div className="mt-1 text-[13px] font-semibold">{c.val}</div>
+                <div className="text-[11px] text-[#6e7d74]">{c.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-6 overflow-x-auto rounded-xl border border-[#e4e8df]">
+            <table className="w-full min-w-[640px] text-left text-[12px]">
+              <thead className="bg-[#f6f7f2] text-[11px] uppercase tracking-widest text-[#6e7d74]">
+                <tr><th className="px-4 py-2.5">Route / File</th><th className="px-4 py-2.5">Role</th><th className="px-4 py-2.5">LOC</th></tr>
+              </thead>
+              <tbody className="divide-y divide-[#eef0eb]">
+                {[
+                  ['app/dashboard/page.tsx', 'Orchestrator — state, fetch, mutations, layout, AI dock (client)', '912'],
+                  ['app/api/agent/route.ts', 'Gemini proxy — qa/report modes, error mapping', '86'],
+                  ['lib/gemini.ts', 'localStorage helpers + buildFinancialContext', '95'],
+                  ['supabase/schema.sql', '5 tables + RLS + trigger', '178'],
+                  ['components/*', '6 tabs + 5 modals + Overview 14-day pulse', '—'],
+                ].map(([a, b, c]) => (
+                  <tr key={a} className="bg-white"><td className="px-4 py-2 font-mono text-[11px]">{a}</td><td className="px-4 py-2 text-[#3a4940]">{b}</td><td className="px-4 py-2">{c}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ */}
+      <section id="faq" className="mx-auto mt-14 max-w-[900px] px-5 sm:px-6">
+        <h2 className="text-center text-[24px] font-semibold tracking-[-0.03em]">Frequently asked</h2>
+        <div className="mt-6 grid gap-3">
+          {[
+            { q: 'Do I need to sign up to try FinPilot?', a: 'No. Guest demo uses localStorage so you can import a CSV, set budgets and quiz the AI immediately. Sign in when you want cloud sync — your data stays isolated by RLS.' },
+            { q: 'Where does the Gemini key come from? Is it free?', a: 'Bring your own key from Google AI Studio (aistudio.google.com/app/apikey) — free tier includes Gemini 2.5 Flash. Paste it in Onboarding, it’s verified live with a test call before saving.' },
+            { q: 'What CSV formats are supported?', a: 'Any CSV with Date / Merchant or Description / Amount and optional Category. Header regex auto-detects columns; you can override via 4 mapping selects and preview 5 rows before import.' },
+            { q: 'Is my data private?', a: 'Yes. Supabase RLS enforces auth.uid() = user_id on transactions, budgets, recurring, goals and profiles. The API route never stores your financialContext — it’s forwarded to Gemini per request.' },
+            { q: 'Can FinPilot give investment advice?', a: 'No. The system instruction explicitly blocks stock/securities picking. FinPilot focuses on cash flow, budget discipline and savings momentum.' },
+            { q: 'What happens on sign out?', a: 'Supabase session is cleared and the app re-seeds localStorage sample data so you can keep exploring without an account.' },
+          ].map(f => (
+            <details key={f.q} className="group rounded-2xl border border-[#e4e8df] bg-white p-4 open:bg-[#fbfcf8]">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-[14px] font-semibold">
+                {f.q} <span className="grid size-6 shrink-0 place-items-center rounded-full border border-[#e4e8df] bg-white text-[#24463e] group-open:rotate-45 transition"><ChevronRight className="size-3.5" /></span>
+              </summary>
+              <p className="mt-2 text-[13px] leading-relaxed text-[#5a6b62]">{f.a}</p>
+            </details>
+          ))}
+        </div>
+      </section>
+
+      {/* Final CTA */}
+      <section className="mx-auto mt-14 max-w-[1200px] px-5 sm:px-6">
+        <div className="rounded-[24px] bg-[#24463e] p-6 text-white sm:p-8">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-[24px] font-semibold tracking-[-0.03em] sm:text-[28px]">Start with your real numbers, not a template.</h2>
+              <p className="mt-2 max-w-[55ch] text-[13px] leading-relaxed text-[#cde0d6]">Open the dashboard, import a statement or seed sample data, and ask your first question. Your Gemini key stays yours — verification happens client-side.</p>
+              <div className="mt-4 flex flex-wrap gap-2 text-[11px]">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 font-medium"><Check className="size-3.5" /> Works offline as guest</span>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 font-medium"><ShieldCheck className="size-3.5" /> RLS-secured</span>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 font-medium"><Brain className="size-3.5" /> Gemini 2.5 Flash</span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Link href="/dashboard" className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-6 py-3 text-[14px] font-semibold text-[#24463e] hover:bg-[#eef4ee]">
+                Open FinPilot <ArrowRight className="size-4" />
+              </Link>
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-6 py-3 text-[14px] font-semibold text-white hover:bg-white/15">
+                Get Gemini key <ArrowUpRight className="size-4" />
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="mt-10 border-t border-[#e4e8df] bg-[#fbfcf8]">
+        <div className="mx-auto max-w-[1200px] px-5 py-8 sm:px-6">
+          <div className="grid gap-8 sm:grid-cols-[1.4fr_1fr_1fr_1fr]">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="grid size-8 place-items-center rounded-xl bg-[#24463e] text-white"><Sparkles className="size-4" /></span>
+                <span className="text-[16px] font-semibold tracking-[-0.03em]">FinPilot</span>
+              </div>
+              <p className="mt-2 max-w-[32ch] text-[12px] leading-relaxed text-[#6e7d74]">AI Personal Finance Decision Support — grounded in your live transactions, budgets, recurring and goals. Built with Next.js 16, Supabase & Gemini.</p>
+              <div className="mt-4 flex gap-2">
+                <a href="mailto:hello@finpilot.app" className="grid size-8 place-items-center rounded-xl border border-[#e4e8df] bg-white text-[#24463e] hover:bg-[#f6f7f2]"><Mail className="size-4" /></a>
+                <a href="https://github.com" target="_blank" rel="noreferrer" className="grid size-8 place-items-center rounded-xl border border-[#e4e8df] bg-white text-[#24463e] hover:bg-[#f6f7f2] font-mono text-[11px] font-bold">&lt;/&gt;</a>
+                <Link href="/dashboard" className="grid size-8 place-items-center rounded-xl border border-[#e4e8df] bg-white text-[#24463e] hover:bg-[#f6f7f2]"><LayoutDashboard className="size-4" /></Link>
+              </div>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-widest text-[#8aa094]">Product</p>
+              <ul className="mt-3 space-y-2 text-[13px] text-[#3a4940]">
+                <li><a href="#features" className="hover:text-[#1d2d28]">Features</a></li>
+                <li><a href="#ai" className="hover:text-[#1d2d28]">AI Copilot</a></li>
+                <li><a href="#how-it-works" className="hover:text-[#1d2d28]">How it works</a></li>
+                <li><Link href="/dashboard" className="hover:text-[#1d2d28]">Dashboard / App</Link></li>
+              </ul>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-widest text-[#8aa094]">Resources</p>
+              <ul className="mt-3 space-y-2 text-[13px] text-[#3a4940]">
+                <li><a href="#tech" className="hover:text-[#1d2d28]">Tech stack</a></li>
+                <li><a href="#faq" className="hover:text-[#1d2d28]">FAQ</a></li>
+                <li><a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="hover:text-[#1d2d28]">Google AI Studio</a></li>
+                <li><Link href="/dashboard" className="hover:text-[#1d2d28]">Reports · AI Audit</Link></li>
+              </ul>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-widest text-[#8aa094]">Legal</p>
+              <ul className="mt-3 space-y-2 text-[13px] text-[#3a4940]">
+                <li><span className="text-[#6e7d74]">No securities advice</span></li>
+                <li><span className="text-[#6e7d74]">Data via Supabase RLS</span></li>
+                <li><span className="text-[#6e7d74]">© 2026 FinPilot</span></li>
+              </ul>
+            </div>
+          </div>
+          <div className="mt-8 flex flex-col gap-2 border-t border-[#e4e8df] pt-4 text-[11px] text-[#8aa094] sm:flex-row sm:items-center sm:justify-between">
+            <span>FinPilot v0.1.0 · Next.js 16.3.3 · Built for decision support, not speculation.</span>
+            <span className="inline-flex items-center gap-1.5"><CircleHelp className="size-3.5" /> Tour available inside the app → /dashboard</span>
+          </div>
+        </div>
+      </footer>
     </div>
   )
 }

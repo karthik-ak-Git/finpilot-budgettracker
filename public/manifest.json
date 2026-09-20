@@ -1,0 +1,26 @@
+{
+  "name": "FinPilot – AI Personal Finance Decision Support",
+  "short_name": "FinPilot",
+  "description": "Understand your money with AI-powered insights. Upload statements, track spending, manage budgets and goals, and ask FinPilot questions about your finances.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f2",
+  "theme_color": "#24463e",
+  "icons": [
+    {
+      "src": "/icon-light-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

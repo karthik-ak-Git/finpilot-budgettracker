@@ -5,7 +5,7 @@ import './globals.css'
 export const metadata: Metadata = {
   title: 'FinPilot – AI Personal Finance Decision Support',
   description: 'Understand your money with AI-powered insights. Upload statements, track spending, manage budgets and goals, and ask FinPilot questions about your finances.',
-  generator: 'v0.app',
+  generator: 'FinPilot',
   icons: {
     icon: [
       {

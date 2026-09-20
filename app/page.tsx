@@ -1,48 +1,870 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, Bell, Bot, CalendarDays, Check, ChevronDown, CircleHelp, FileUp, Home, LayoutDashboard, Lightbulb, Paperclip, Plus, Receipt, Repeat2, Search, Settings2, Sparkles, Target, Upload, WalletCards, X } from 'lucide-react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
+import {
+  LayoutDashboard,
+  Receipt,
+  Repeat2,
+  BarChart3,
+  Target,
+  FileText,
+  Sparkles,
+  KeyRound,
+  LogOut,
+  LogIn,
+  User as UserIcon,
+  Search,
+  Bot,
+  CircleHelp,
+  Home,
+  Upload,
+  FileSpreadsheet,
+  AlertCircle,
+  CheckCircle2,
+} from 'lucide-react'
 
-type Transaction = { merchant: string; detail: string; date: string; amount: number; category: string; mark: string }
-const navItems = [{ label: 'Overview', icon: LayoutDashboard }, { label: 'Transactions', icon: Receipt }, { label: 'Recurring', icon: Repeat2 }, { label: 'Budgets', icon: BarChart3 }, { label: 'Goals', icon: Target }, { label: 'Reports', icon: FileUp }]
-const transactions: Transaction[] = [
-  { merchant: 'Whole Foods Market', detail: 'Visa •• 4821', date: 'Sep 18, 2026', amount: -86.42, category: 'Food', mark: 'W' },
-  { merchant: 'Acme Utilities', detail: 'Checking •• 1092', date: 'Sep 17, 2026', amount: -142.18, category: 'Utilities', mark: 'A' },
-  { merchant: 'Stripe payout', detail: 'Checking •• 1092', date: 'Sep 16, 2026', amount: 2450, category: 'Income', mark: 'S' },
-  { merchant: 'Netflix.com', detail: 'Visa •• 4821', date: 'Sep 15, 2026', amount: -22.99, category: 'Subscriptions', mark: 'N' },
-  { merchant: 'Metro Transit', detail: 'Visa •• 4821', date: 'Sep 14, 2026', amount: -48, category: 'Transport', mark: 'M' },
-  { merchant: 'The Green Fork', detail: 'Visa •• 4821', date: 'Sep 12, 2026', amount: -74.5, category: 'Food', mark: 'G' },
+import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import { Transaction, Budget, RecurringItem, Goal } from '@/lib/types'
+import {
+  getStoredGeminiKey,
+  setStoredGeminiKey,
+  getStoredCurrency,
+  setStoredCurrency,
+  buildFinancialContext,
+} from '@/lib/gemini'
+import {
+  sampleTransactions,
+  sampleBudgets,
+  sampleRecurring,
+  sampleGoals,
+} from '@/lib/sampleData'
+
+// Modular Components
+import { OverviewTab } from '@/components/dashboard/OverviewTab'
+import { TransactionsTab } from '@/components/transactions/TransactionsTab'
+import { BudgetsTab } from '@/components/budgets/BudgetsTab'
+import { RecurringTab } from '@/components/recurring/RecurringTab'
+import { GoalsTab } from '@/components/goals/GoalsTab'
+import { ReportsTab } from '@/components/reports/ReportsTab'
+
+// Modals
+import { AuthModal } from '@/components/auth/AuthModal'
+import { GeminiOnboardingModal } from '@/components/onboarding/GeminiOnboardingModal'
+import { TransactionModal } from '@/components/transactions/TransactionModal'
+import { CsvImportModal } from '@/components/import/CsvImportModal'
+
+const navItems = [
+  { id: 'Overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'Transactions', label: 'Transactions', icon: Receipt },
+  { id: 'Budgets', label: 'Budgets', icon: BarChart3 },
+  { id: 'Recurring', label: 'Recurring', icon: Repeat2 },
+  { id: 'Goals', label: 'Goals', icon: Target },
+  { id: 'Reports', label: 'Reports', icon: FileText },
 ]
-const subscriptions = [{ name: 'Netflix', cadence: 'Monthly · next Sep 22', amount: 22.99, tone: 'bg-red-100 text-red-700', initial: 'N' }, { name: 'Notion', cadence: 'Monthly · next Sep 24', amount: 12, tone: 'bg-slate-100 text-slate-700', initial: 'N' }, { name: 'Spotify', cadence: 'Monthly · next Sep 28', amount: 11.99, tone: 'bg-green-100 text-green-700', initial: 'S' }]
-const categories = [{ name: 'Housing', amount: 1850, width: '92%', tone: 'bg-[#24463e]' }, { name: 'Food & dining', amount: 624, width: '57%', tone: 'bg-[#d7a84a]' }, { name: 'Transport', amount: 318, width: '35%', tone: 'bg-[#7f9f96]' }, { name: 'Subscriptions', amount: 146, width: '16%', tone: 'bg-[#baa4c7]' }]
-const money = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-function StatCard({ label, value, change, positive, icon: Icon, accent = 'text-[#24463e]' }: { label: string; value: string; change: string; positive?: boolean; icon: typeof WalletCards; accent?: string }) { return <div className="rounded-2xl border border-[#e5e6df] bg-white p-5 shadow-[0_1px_2px_rgba(30,50,40,0.03)]"><div className="flex items-start justify-between"><p className="text-[13px] font-medium text-[#748078]">{label}</p><Icon className={`size-[18px] ${accent}`} strokeWidth={1.8} /></div><p className="mt-3 text-[27px] font-semibold tracking-[-0.04em] text-[#1d2d28]">{value}</p><div className="mt-2 flex items-center gap-1 text-xs font-medium text-[#748078]"><span className={positive ? 'text-[#468367]' : 'text-[#b06c43]'}>{positive ? <ArrowUpRight className="inline size-3.5" /> : <ArrowDownRight className="inline size-3.5" />}{change}</span> vs last month</div></div> }
+export default function FinPilotApp() {
+  const [activeTab, setActiveTab] = useState('Overview')
+  const [user, setUser] = useState<any>(null)
+  const [geminiKey, setGeminiKey] = useState('')
+  const [currency, setCurrency] = useState('$')
 
-export default function Page() {
-  const [active, setActive] = useState('Overview'); const [showUpload, setShowUpload] = useState(false); const [showReport, setShowReport] = useState(false); const [showAdd, setShowAdd] = useState(false); const [question, setQuestion] = useState(''); const [answer, setAnswer] = useState(''); const [loading, setLoading] = useState(false); const [uploaded, setUploaded] = useState(false); const [transactionsState, setTransactionsState] = useState(transactions)
-  const askAgent = async (prompt = question, mode = 'qa') => { if (!prompt.trim()) return; setLoading(true); setAnswer(''); try { const response = await fetch('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: prompt, mode }) }); const data = await response.json(); setAnswer(data.answer || data.error) } catch { setAnswer('The agent is temporarily unavailable. Try again.') } finally { setLoading(false) } }
-  const pageTitle = active === 'Overview' ? 'Good morning, Jordan' : active
-  const pageDescription = active === 'Overview' ? "Here's your money at a glance." : `Review and manage your ${active.toLowerCase()} in one place.`
-  const total = useMemo(() => transactionsState.filter(t => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0), [transactionsState])
-  return <div className="min-h-screen bg-[#f6f7f2] text-[#1d2d28]">
-    <aside className="fixed inset-y-0 left-0 hidden w-[232px] border-r border-[#e4e8df] bg-[#fbfcf8] px-4 py-6 lg:flex lg:flex-col"><div className="flex items-center gap-2 px-3"><div className="grid size-8 place-items-center rounded-xl bg-[#24463e] text-white"><Sparkles className="size-4" /></div><span className="text-[17px] font-semibold tracking-[-0.03em]">FinPilot</span></div><p className="mb-3 mt-10 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[#a0aaa2]">Workspace</p><nav className="flex flex-col gap-1">{navItems.map(item => <button key={item.label} onClick={() => setActive(item.label)} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition ${active === item.label ? 'bg-[#e7efe9] text-[#24463e]' : 'text-[#718078] hover:bg-[#f0f4ed]'}`}><item.icon className="size-[17px]" strokeWidth={1.8} />{item.label}</button>)}</nav><div className="mt-auto rounded-2xl bg-[#edf2ea] p-4"><div className="mb-3 flex size-8 items-center justify-center rounded-lg bg-white text-[#24463e]"><CircleHelp className="size-4" /></div><p className="text-xs font-semibold text-[#31443b]">Need a hand?</p><p className="mt-1 text-[11px] leading-relaxed text-[#718078]">Ask FinPilot about your spending anytime.</p><button onClick={() => { setActive('Overview'); setQuestion('What should I pay attention to this month?') }} className="mt-3 text-[11px] font-semibold text-[#24463e]">Try a question →</button></div><div className="mt-5 flex items-center gap-3 border-t border-[#e4e8df] px-3 pt-5"><div className="grid size-8 place-items-center rounded-full bg-[#d4e1d4] text-xs font-bold text-[#315646]">JD</div><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold">Jordan Davis</p><p className="text-[10px] text-[#89948d]">Personal workspace</p></div><Settings2 className="size-4 text-[#89948d]" /></div></aside>
-    <main className="lg:pl-[232px]"><header className="flex h-[76px] items-center justify-between border-b border-[#e5e8e0] bg-[#fbfcf8] px-5 sm:px-8 lg:px-10"><div className="flex items-center gap-3 lg:hidden"><div className="grid size-8 place-items-center rounded-xl bg-[#24463e] text-white"><Sparkles className="size-4" /></div><span className="font-semibold">FinPilot</span></div><div className="hidden items-center gap-2 text-xs text-[#77847d] lg:flex"><Home className="size-3.5" /> / <span className="font-medium text-[#31443b]">{active}</span></div><div className="flex items-center gap-3"><button className="relative rounded-lg p-2 text-[#718078] hover:bg-[#eef2ec]" aria-label="Notifications"><Bell className="size-[18px]" /><span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-[#d87e57]" /></button><button className="flex items-center gap-2 rounded-lg border border-[#e1e6de] bg-white px-2.5 py-1.5 text-xs font-medium"><span className="grid size-6 place-items-center rounded-full bg-[#d4e1d4] text-[10px] font-bold text-[#315646]">JD</span><ChevronDown className="size-3.5 text-[#8c9890]" /></button></div></header>
-      <div className="mx-auto max-w-[1320px] px-5 py-7 sm:px-8 lg:px-10"><div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="mb-1 text-xs font-medium text-[#89948d]">Friday, September 19, 2026</p><h1 className="text-[30px] font-semibold tracking-[-0.05em] text-[#1d2d28]">{pageTitle}</h1><p className="mt-1 text-sm text-[#748078]">{pageDescription}</p></div><div className="flex gap-2"><button onClick={() => setShowUpload(true)} className="inline-flex items-center gap-2 rounded-xl border border-[#d9e1d8] bg-white px-3.5 py-2.5 text-xs font-semibold text-[#315646] shadow-sm hover:bg-[#f7faf6]"><Upload className="size-4" /> Import data</button><button onClick={() => setShowReport(true)} className="inline-flex items-center gap-2 rounded-xl bg-[#24463e] px-3.5 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-[#315b50]"><FileUp className="size-4" /> Monthly report</button></div></div>
-        {active === 'Overview' && <><section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Cash flow this month" value="+$684.20" change="8.4%" positive icon={WalletCards} /><StatCard label="Total spending" value={money(total)} change="4.2%" icon={ArrowDownRight} accent="text-[#b06c43]" /><StatCard label="Upcoming commitments" value="$1,248.00" change="12.1%" icon={CalendarDays} accent="text-[#9b7a35]" /><StatCard label="Goal progress" value="42.6%" change="6.8%" positive icon={Target} accent="text-[#7a6592]" /></section><section className="mt-6 grid gap-6 xl:grid-cols-[1.45fr_1fr]"><div className="rounded-2xl border border-[#e5e6df] bg-white p-5"><div className="flex items-start justify-between"><div><h2 className="text-sm font-semibold">Spending overview</h2><p className="mt-1 text-xs text-[#89948d]">September 2026 · all accounts</p></div><button className="flex items-center gap-1.5 rounded-lg border border-[#e4e8e0] px-2.5 py-1.5 text-[11px] font-medium text-[#647169]">This month <ChevronDown className="size-3" /></button></div><div className="mt-6 grid grid-cols-[1fr_150px] items-center gap-5"><div className="h-[172px] rounded-xl bg-[#fbfcf8] p-3"><div className="flex h-full items-end gap-2 sm:gap-4">{[36,49,42,64,55,68,52,74,62,78,70,83,67,91,76,86,71,80,88,72,95,82,89,74,91,84,98,87,94,80].map((height, i) => <div key={i} className="flex-1 rounded-t-sm bg-[#cfe0d1]" style={{ height: `${height}%` }} />)}</div></div><div className="flex flex-col gap-3"><div><p className="text-[11px] text-[#89948d]">Spent</p><p className="mt-0.5 text-lg font-semibold">$3,186</p></div><div><p className="text-[11px] text-[#89948d]">Income</p><p className="mt-0.5 text-lg font-semibold text-[#468367]">$3,870</p></div><div className="flex items-center gap-1 text-[11px] text-[#468367]"><ArrowUpRight className="size-3" /> 8.4% net flow</div></div></div></div><div className="rounded-2xl border border-[#e5e6df] bg-white p-5"><div className="flex items-start justify-between"><div><h2 className="text-sm font-semibold">Spending by category</h2><p className="mt-1 text-xs text-[#89948d]">Top categories this month</p></div><MoreHorizontalIcon /></div><div className="mt-5 flex flex-col gap-4">{categories.map(bar => <div key={bar.name}><div className="mb-1.5 flex justify-between text-xs"><span className="font-medium text-[#536159]">{bar.name}</span><span className="font-semibold">${bar.amount.toLocaleString()}</span></div><div className="h-2 overflow-hidden rounded-full bg-[#eef1eb]"><div className={`h-full rounded-full ${bar.tone}`} style={{ width: bar.width }} /></div></div>)}</div></div></section><section className="mt-6 grid gap-6 xl:grid-cols-[1.25fr_1fr]"><div className="rounded-2xl border border-[#e5e6df] bg-white"><div className="flex items-center justify-between border-b border-[#edf0eb] p-5"><div><h2 className="text-sm font-semibold">Recent transactions</h2><p className="mt-1 text-xs text-[#89948d]">Your latest activity</p></div><button onClick={() => setActive('Transactions')} className="text-xs font-semibold text-[#315b50]">See all →</button></div><div className="divide-y divide-[#f0f2ee]">{transactionsState.slice(0, 5).map((tx, i) => <TransactionRow tx={tx} key={`${tx.merchant}-${i}`} />)}</div></div><div className="rounded-2xl border border-[#e5e6df] bg-white p-5"><div className="flex items-start justify-between"><div><h2 className="text-sm font-semibold">Upcoming commitments</h2><p className="mt-1 text-xs text-[#89948d]">Next 30 days</p></div><Repeat2 className="size-[18px] text-[#9b7a35]" /></div><div className="mt-4 flex flex-col gap-2.5">{subscriptions.map(item => <div key={item.name} className="flex items-center gap-3 rounded-xl bg-[#fbfcf8] p-3"><div className={`grid size-8 place-items-center rounded-lg text-xs font-bold ${item.tone}`}>{item.initial}</div><div className="min-w-0 flex-1"><p className="text-xs font-semibold">{item.name}</p><p className="mt-0.5 text-[10px] text-[#89948d]">{item.cadence}</p></div><p className="text-xs font-semibold">${item.amount.toFixed(2)}</p></div>)}</div></div></section><section className="mt-6 grid gap-6 xl:grid-cols-2"><Insight tone="green" icon={Lightbulb} title="A useful observation">Dining out is <strong>$124 higher</strong> than your 3-month average. A lighter week could put you back on track for your emergency fund goal.</Insight><Insight tone="orange" icon={AlertTriangle} title="Needs your attention">We found a possible duplicate charge from <strong>Acme Utilities</strong> on Sep 17. Review before categorizing.</Insight></section></>}
-        {active !== 'Overview' && <WorkspacePage active={active} transactions={transactionsState} onAdd={() => setShowAdd(true)} onCategorize={(i, category) => setTransactionsState(prev => prev.map((t, index) => index === i ? { ...t, category } : t))} />}
-        <section className="mt-8 rounded-2xl border border-[#dce8df] bg-[#eaf3ed] p-5 sm:p-6"><div className="flex flex-col gap-4 md:flex-row md:items-center"><div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#d6e7da] text-[#24463e]"><Bot className="size-5" /></div><div className="flex-1"><p className="text-sm font-semibold">Ask FinPilot anything about your money</p><p className="mt-1 text-xs text-[#718078]">Powered by the FinPilot agent · grounded in your imported data, budgets, and goals. Never investment advice.</p></div><form onSubmit={e => { e.preventDefault(); askAgent() }} className="flex w-full gap-2 md:max-w-[500px]"><div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-[#d3e1d5] bg-white px-3"><Search className="size-4 shrink-0 text-[#9aa79e]" /><input value={question} onChange={e => setQuestion(e.target.value)} placeholder="Where did I spend the most?" className="min-w-0 flex-1 bg-transparent py-2.5 text-xs outline-none placeholder:text-[#a1aaa4]" /></div><button disabled={loading} type="submit" className="rounded-xl bg-[#24463e] px-3.5 text-xs font-semibold text-white disabled:opacity-60">{loading ? 'Thinking…' : 'Ask'}</button></form></div>{answer && <div className="mt-4 flex items-start gap-3 rounded-xl border border-[#d5e4d7] bg-white p-4 text-xs leading-relaxed text-[#536159]"><Sparkles className="mt-0.5 size-4 shrink-0 text-[#d09235]" /><div><p className="mb-1 font-semibold text-[#315646]">FinPilot agent</p>{answer}</div></div>}</section>
-      </div></main>
-      {showUpload && <Modal title="Import your financial data" onClose={() => setShowUpload(false)}><p className="text-xs text-[#748078]">Upload CSV, PDF, or spreadsheet records. FinPilot normalizes, categorizes, and detects recurring payments.</p><button onClick={() => setUploaded(true)} className="mt-6 flex w-full flex-col items-center justify-center rounded-xl border border-dashed border-[#b9cdbd] bg-[#f8fbf7] px-5 py-8 text-center hover:bg-[#f0f7f1]"><div className="grid size-10 place-items-center rounded-xl bg-[#e3efe4] text-[#315b50]"><Paperclip className="size-5" /></div><p className="mt-3 text-xs font-semibold">Drop a file here or browse</p><p className="mt-1 text-[11px] text-[#89948d]">CSV, PDF, XLSX · up to 10 MB</p></button>{uploaded && <div className="mt-4 flex items-center gap-2 rounded-xl bg-[#edf5ee] p-3 text-xs text-[#315646]"><Check className="size-4" />demo-september-statement.csv queued for parsing</div>}<div className="mt-6 flex justify-end gap-2"><button onClick={() => setShowUpload(false)} className="rounded-xl px-3.5 py-2 text-xs font-semibold text-[#748078]">Cancel</button><button onClick={() => { setShowUpload(false); setUploaded(false) }} className="rounded-xl bg-[#24463e] px-3.5 py-2 text-xs font-semibold text-white">Import file</button></div></Modal>}
-      {showReport && <Modal title="Your monthly financial report" onClose={() => setShowReport(false)}><p className="text-xs text-[#89948d]">September 2026 · generated by FinPilot agent</p><div className="mt-5 grid grid-cols-3 gap-2">{[['Income', '$3,870'], ['Expenses', '$3,186'], ['Net flow', '+$684']].map(([label, value]) => <div key={label} className="rounded-xl bg-[#f5f8f3] p-3"><p className="text-[10px] text-[#89948d]">{label}</p><p className="mt-1 text-sm font-semibold">{value}</p></div>)}</div><div className="mt-5 rounded-xl border border-[#e5e6df] p-4"><h3 className="text-xs font-semibold">Key observations</h3><ul className="mt-3 flex flex-col gap-2 text-xs leading-relaxed text-[#536159]"><li>Food & dining is up 12% from last month.</li><li>Three recurring subscriptions total $46.98/month.</li><li>Emergency fund goal is 42.6% complete.</li></ul></div><button onClick={() => askAgent('Generate my September monthly report with observations and action items.', 'report')} className="mt-4 w-full rounded-xl bg-[#24463e] px-4 py-2.5 text-xs font-semibold text-white">Generate full AI report</button>{answer && <div className="mt-4 rounded-xl bg-[#edf5ee] p-4 text-xs leading-relaxed text-[#536159]">{answer}</div>}</Modal>}
-      {showAdd && <Modal title={`Add to ${active}`} onClose={() => setShowAdd(false)}><div className="flex flex-col gap-3"><input id="new-item" placeholder="Name or description" className="rounded-xl border border-[#dfe6dd] px-3 py-2.5 text-xs outline-none" /><input placeholder="Amount" type="number" className="rounded-xl border border-[#dfe6dd] px-3 py-2.5 text-xs outline-none" /><button onClick={() => setShowAdd(false)} className="rounded-xl bg-[#24463e] px-4 py-2.5 text-xs font-semibold text-white">Save item</button></div></Modal>}
+  // Financial Data State
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [budgets, setBudgets] = useState<Budget[]>([])
+  const [recurring, setRecurring] = useState<RecurringItem[]>([])
+  const [goals, setGoals] = useState<Goal[]>([])
+  const [loadingData, setLoadingData] = useState(true)
+
+  // Modals State
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [showGeminiModal, setShowGeminiModal] = useState(false)
+  const [showTransactionModal, setShowTransactionModal] = useState(false)
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
+  const [showCsvModal, setShowCsvModal] = useState(false)
+
+  // Floating AI Chat State
+  const [aiQuestion, setAiQuestion] = useState('')
+  const [aiAnswer, setAiAnswer] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+
+  // Initialize Auth & Storage
+  useEffect(() => {
+    const key = getStoredGeminiKey()
+    const curr = getStoredCurrency()
+    if (key) setGeminiKey(key)
+    if (curr) setCurrency(curr)
+
+    // Check Supabase Auth
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user)
+    })
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_, session) => {
+      setUser(session?.user || null)
+    })
+
+    return () => {
+      authListener.subscription.unsubscribe()
+    }
+  }, [])
+
+  // Auto-prompt onboarding if no Gemini key found
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!getStoredGeminiKey()) {
+        setShowGeminiModal(true)
+      }
+    }, 1200)
+    return () => clearTimeout(timer)
+  }, [])
+
+  // Fetch live data from Supabase (or fallback to local sample data)
+  const fetchData = useCallback(async () => {
+    setLoadingData(true)
+    try {
+      if (user) {
+        // Fetch user profile
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('currency, gemini_api_key')
+          .eq('id', user.id)
+          .single()
+
+        if (profile?.currency) {
+          setCurrency(profile.currency)
+          setStoredCurrency(profile.currency)
+        }
+        if (profile?.gemini_api_key && !geminiKey) {
+          setGeminiKey(profile.gemini_api_key)
+          setStoredGeminiKey(profile.gemini_api_key)
+        }
+
+        // Fetch user's transactions
+        const { data: txData } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('date', { ascending: false })
+
+        // Fetch user's budgets
+        const { data: bData } = await supabase
+          .from('budgets')
+          .select('*')
+          .eq('user_id', user.id)
+
+        // Fetch user's recurring
+        const { data: rData } = await supabase
+          .from('recurring')
+          .select('*')
+          .eq('user_id', user.id)
+
+        // Fetch user's goals
+        const { data: gData } = await supabase
+          .from('goals')
+          .select('*')
+          .eq('user_id', user.id)
+
+        setTransactions(txData || [])
+        setBudgets(bData || [])
+        setRecurring(rData || [])
+        setGoals(gData || [])
+      } else {
+        // Local state initialization for non-logged-in demo mode
+        const localTx = localStorage.getItem('finpilot_local_transactions')
+        if (localTx) {
+          try {
+            setTransactions(JSON.parse(localTx))
+            setBudgets(JSON.parse(localStorage.getItem('finpilot_local_budgets') || '[]'))
+            setRecurring(JSON.parse(localStorage.getItem('finpilot_local_recurring') || '[]'))
+            setGoals(JSON.parse(localStorage.getItem('finpilot_local_goals') || '[]'))
+          } catch {
+            seedSampleDataLocally()
+          }
+        } else {
+          seedSampleDataLocally()
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching FinPilot data:', err)
+    } finally {
+      setLoadingData(false)
+    }
+  }, [user, geminiKey])
+
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
+
+  // Helper to seed sample data locally or in Supabase
+  const seedSampleDataLocally = () => {
+    const formattedTx: Transaction[] = sampleTransactions.map((t, idx) => ({
+      ...t,
+      id: `local-tx-${idx}`,
+    }))
+    const formattedB: Budget[] = sampleBudgets.map((b, idx) => ({
+      ...b,
+      id: `local-b-${idx}`,
+    }))
+    const formattedR: RecurringItem[] = sampleRecurring.map((r, idx) => ({
+      ...r,
+      id: `local-r-${idx}`,
+    }))
+    const formattedG: Goal[] = sampleGoals.map((g, idx) => ({
+      ...g,
+      id: `local-g-${idx}`,
+    }))
+
+    setTransactions(formattedTx)
+    setBudgets(formattedB)
+    setRecurring(formattedR)
+    setGoals(formattedG)
+
+    localStorage.setItem('finpilot_local_transactions', JSON.stringify(formattedTx))
+    localStorage.setItem('finpilot_local_budgets', JSON.stringify(formattedB))
+    localStorage.setItem('finpilot_local_recurring', JSON.stringify(formattedR))
+    localStorage.setItem('finpilot_local_goals', JSON.stringify(formattedG))
+  }
+
+  // Handle Seeding to Supabase
+  const seedDataToSupabase = async () => {
+    if (!user) {
+      seedSampleDataLocally()
+      return
+    }
+    try {
+      const txToInsert = sampleTransactions.map(t => ({ ...t, user_id: user.id }))
+      const bToInsert = sampleBudgets.map(b => ({ ...b, user_id: user.id }))
+      const rToInsert = sampleRecurring.map(r => ({ ...r, user_id: user.id }))
+      const gToInsert = sampleGoals.map(g => ({ ...g, user_id: user.id }))
+
+      await supabase.from('transactions').insert(txToInsert)
+      await supabase.from('budgets').insert(bToInsert)
+      await supabase.from('recurring').insert(rToInsert)
+      await supabase.from('goals').insert(gToInsert)
+      fetchData()
+    } catch (err) {
+      console.error('Error seeding data to Supabase:', err)
+    }
+  }
+
+  // --- Transaction Handlers ---
+  const handleSaveTransaction = async (data: Omit<Transaction, 'id'>, id?: string) => {
+    if (user) {
+      if (id) {
+        const { error } = await supabase.from('transactions').update(data).eq('id', id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('transactions').insert([{ ...data, user_id: user.id }])
+        if (error) throw error
+      }
+      fetchData()
+    } else {
+      if (id) {
+        const updated = transactions.map(t => (t.id === id ? { ...data, id } : t))
+        setTransactions(updated)
+        localStorage.setItem('finpilot_local_transactions', JSON.stringify(updated))
+      } else {
+        const newTx: Transaction = { ...data, id: `local-tx-${Date.now()}` }
+        const updated = [newTx, ...transactions]
+        setTransactions(updated)
+        localStorage.setItem('finpilot_local_transactions', JSON.stringify(updated))
+      }
+    }
+  }
+
+  const handleDeleteTransaction = async (id: string) => {
+    if (user) {
+      const { error } = await supabase.from('transactions').delete().eq('id', id)
+      if (error) throw error
+      setTransactions(prev => prev.filter(t => t.id !== id))
+    } else {
+      const updated = transactions.filter(t => t.id !== id)
+      setTransactions(updated)
+      localStorage.setItem('finpilot_local_transactions', JSON.stringify(updated))
+    }
+  }
+
+  const handleBatchImportCsv = async (newTx: Omit<Transaction, 'id'>[]) => {
+    if (user) {
+      const records = newTx.map(t => ({ ...t, user_id: user.id }))
+      const { error } = await supabase.from('transactions').insert(records)
+      if (error) throw error
+      fetchData()
+    } else {
+      const formatted: Transaction[] = newTx.map((t, idx) => ({
+        ...t,
+        id: `local-import-${Date.now()}-${idx}`,
+      }))
+      const updated = [...formatted, ...transactions]
+      setTransactions(updated)
+      localStorage.setItem('finpilot_local_transactions', JSON.stringify(updated))
+    }
+  }
+
+  // --- Budget Handlers ---
+  const handleSaveBudget = async (data: Omit<Budget, 'id'>, id?: string) => {
+    if (user) {
+      if (id) {
+        const { error } = await supabase.from('budgets').update(data).eq('id', id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase
+          .from('budgets')
+          .upsert([{ ...data, user_id: user.id }], { onConflict: 'user_id, category' })
+        if (error) throw error
+      }
+      fetchData()
+    } else {
+      if (id) {
+        const updated = budgets.map(b => (b.id === id ? { ...data, id } : b))
+        setBudgets(updated)
+        localStorage.setItem('finpilot_local_budgets', JSON.stringify(updated))
+      } else {
+        const newBudget: Budget = { ...data, id: `local-b-${Date.now()}` }
+        const updated = [...budgets.filter(b => b.category !== data.category), newBudget]
+        setBudgets(updated)
+        localStorage.setItem('finpilot_local_budgets', JSON.stringify(updated))
+      }
+    }
+  }
+
+  const handleDeleteBudget = async (id: string) => {
+    if (user) {
+      const { error } = await supabase.from('budgets').delete().eq('id', id)
+      if (error) throw error
+      setBudgets(prev => prev.filter(b => b.id !== id))
+    } else {
+      const updated = budgets.filter(b => b.id !== id)
+      setBudgets(updated)
+      localStorage.setItem('finpilot_local_budgets', JSON.stringify(updated))
+    }
+  }
+
+  // --- Recurring Handlers ---
+  const handleSaveRecurring = async (data: Omit<RecurringItem, 'id'>, id?: string) => {
+    if (user) {
+      if (id) {
+        const { error } = await supabase.from('recurring').update(data).eq('id', id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('recurring').insert([{ ...data, user_id: user.id }])
+        if (error) throw error
+      }
+      fetchData()
+    } else {
+      if (id) {
+        const updated = recurring.map(r => (r.id === id ? { ...data, id } : r))
+        setRecurring(updated)
+        localStorage.setItem('finpilot_local_recurring', JSON.stringify(updated))
+      } else {
+        const newItem: RecurringItem = { ...data, id: `local-r-${Date.now()}` }
+        const updated = [...recurring, newItem]
+        setRecurring(updated)
+        localStorage.setItem('finpilot_local_recurring', JSON.stringify(updated))
+      }
+    }
+  }
+
+  const handleDeleteRecurring = async (id: string) => {
+    if (user) {
+      const { error } = await supabase.from('recurring').delete().eq('id', id)
+      if (error) throw error
+      setRecurring(prev => prev.filter(r => r.id !== id))
+    } else {
+      const updated = recurring.filter(r => r.id !== id)
+      setRecurring(updated)
+      localStorage.setItem('finpilot_local_recurring', JSON.stringify(updated))
+    }
+  }
+
+  // --- Goal Handlers ---
+  const handleSaveGoal = async (data: Omit<Goal, 'id'>, id?: string) => {
+    if (user) {
+      if (id) {
+        const { error } = await supabase.from('goals').update(data).eq('id', id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('goals').insert([{ ...data, user_id: user.id }])
+        if (error) throw error
+      }
+      fetchData()
+    } else {
+      if (id) {
+        const updated = goals.map(g => (g.id === id ? { ...data, id } : g))
+        setGoals(updated)
+        localStorage.setItem('finpilot_local_goals', JSON.stringify(updated))
+      } else {
+        const newGoal: Goal = { ...data, id: `local-g-${Date.now()}` }
+        const updated = [...goals, newGoal]
+        setGoals(updated)
+        localStorage.setItem('finpilot_local_goals', JSON.stringify(updated))
+      }
+    }
+  }
+
+  const handleDeleteGoal = async (id: string) => {
+    if (user) {
+      const { error } = await supabase.from('goals').delete().eq('id', id)
+      if (error) throw error
+      setGoals(prev => prev.filter(g => g.id !== id))
+    } else {
+      const updated = goals.filter(g => g.id !== id)
+      setGoals(updated)
+      localStorage.setItem('finpilot_local_goals', JSON.stringify(updated))
+    }
+  }
+
+  const handleAddGoalFunds = async (goalId: string, currentAmount: number, additional: number) => {
+    const newTotal = currentAmount + additional
+    if (user) {
+      const { error } = await supabase.from('goals').update({ current_amount: newTotal }).eq('id', goalId)
+      if (error) throw error
+      fetchData()
+    } else {
+      const updated = goals.map(g => (g.id === goalId ? { ...g, current_amount: newTotal } : g))
+      setGoals(updated)
+      localStorage.setItem('finpilot_local_goals', JSON.stringify(updated))
+    }
+  }
+
+  // --- Ask Gemini Agent ---
+  const handleAskAgent = async (promptQuestion = aiQuestion) => {
+    if (!promptQuestion.trim()) return
+    if (!geminiKey) {
+      setShowGeminiModal(true)
+      return
+    }
+
+    setAiLoading(true)
+    setAiAnswer('')
+
+    try {
+      const context = buildFinancialContext(currency, transactions, budgets, recurring, goals)
+      const res = await fetch('/api/agent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': geminiKey,
+        },
+        body: JSON.stringify({
+          question: promptQuestion,
+          mode: 'qa',
+          apiKey: geminiKey,
+          financialContext: context,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        if (data.requiresKey) {
+          setShowGeminiModal(true)
+        }
+        throw new Error(data.error || 'Failed to communicate with FinPilot Gemini agent.')
+      }
+
+      setAiAnswer(data.answer)
+    } catch (err: any) {
+      setAiAnswer(err.message || 'The Gemini agent is temporarily unavailable. Check your API key.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    setUser(null)
+    seedSampleDataLocally()
+  }
+
+  return (
+    <div className="min-h-screen bg-[#f6f7f2] text-[#1d2d28]">
+      {/* Sidebar Navigation */}
+      <aside className="fixed inset-y-0 left-0 hidden w-[232px] border-r border-[#e4e8df] bg-[#fbfcf8] px-4 py-6 lg:flex lg:flex-col">
+        <div className="flex items-center gap-2 px-3">
+          <div className="grid size-8 place-items-center rounded-xl bg-[#24463e] text-white">
+            <Sparkles className="size-4" />
+          </div>
+          <span className="text-[17px] font-semibold tracking-[-0.03em] text-[#1d2d28]">FinPilot</span>
+        </div>
+
+        <p className="mb-2 mt-8 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[#a0aaa2]">
+          Workspace
+        </p>
+
+        <nav className="flex flex-col gap-1">
+          {navItems.map(item => {
+            const Icon = item.icon
+            const isCurrent = activeTab === item.id
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition ${
+                  isCurrent
+                    ? 'bg-[#e7efe9] font-semibold text-[#24463e]'
+                    : 'text-[#718078] hover:bg-[#f0f4ed] hover:text-[#1d2d28]'
+                }`}
+              >
+                <Icon className="size-[17px]" strokeWidth={1.8} />
+                {item.label}
+              </button>
+            )
+          })}
+        </nav>
+
+        {/* Gemini AI Status Card */}
+        <div className="mt-auto rounded-2xl border border-[#dbe6dc] bg-[#eef4ee] p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex size-7 items-center justify-center rounded-lg bg-white text-[#24463e] shadow-2xs">
+              <Bot className="size-4" />
+            </div>
+            {geminiKey ? (
+              <span className="flex items-center gap-1 rounded-full bg-[#e0eee2] px-2 py-0.5 text-[10px] font-semibold text-[#24463e]">
+                <CheckCircle2 className="size-3 text-[#24463e]" /> Gemini 2.5
+              </span>
+            ) : (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                Setup Key
+              </span>
+            )}
+          </div>
+          <p className="text-xs font-semibold text-[#24463e]">Gemini Financial Copilot</p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-[#59695f]">
+            Grounded in your real transactions and budgets.
+          </p>
+          <button
+            onClick={() => setShowGeminiModal(true)}
+            className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-semibold text-[#24463e] hover:underline"
+          >
+            {geminiKey ? 'Manage Gemini Key →' : 'Connect Gemini API Key →'}
+          </button>
+        </div>
+
+        {/* User Account / Session Profile */}
+        <div className="mt-4 flex items-center gap-3 border-t border-[#e4e8df] px-2 pt-4">
+          <div className="grid size-8 shrink-0 place-items-center rounded-full bg-[#d4e1d4] text-xs font-bold text-[#315646]">
+            {user?.email ? user.email[0].toUpperCase() : 'G'}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-semibold text-[#1d2d28]">
+              {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Guest Session'}
+            </p>
+            <p className="truncate text-[10px] text-[#89948d]">
+              {user ? 'Supabase Synchronized' : 'Local Demo Mode'}
+            </p>
+          </div>
+          {user ? (
+            <button
+              onClick={handleSignOut}
+              title="Sign Out"
+              className="rounded-lg p-1.5 text-[#89948d] hover:bg-[#edf2ea] hover:text-red-600"
+            >
+              <LogOut className="size-4" />
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowAuthModal(true)}
+              title="Sign In / Register"
+              className="rounded-lg p-1.5 text-[#24463e] hover:bg-[#edf2ea]"
+            >
+              <LogIn className="size-4" />
+            </button>
+          )}
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="lg:pl-[232px]">
+        {/* Header Bar */}
+        <header className="flex h-[72px] items-center justify-between border-b border-[#e5e8e0] bg-[#fbfcf8] px-5 sm:px-8 lg:px-10">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs text-[#77847d]">
+              <Home className="size-3.5" /> /
+              <span className="font-semibold text-[#31443b]">{activeTab}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            {/* Currency Selector */}
+            <button
+              onClick={() => setShowGeminiModal(true)}
+              title="Change Currency & API Key"
+              className="flex items-center gap-1.5 rounded-xl border border-[#dfe5de] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#3a4940] hover:bg-[#f6f9f5]"
+            >
+              <span>{currency}</span>
+              <span className="text-[10px] text-[#849289]">Currency</span>
+            </button>
+
+            {/* Gemini Key Status */}
+            <button
+              onClick={() => setShowGeminiModal(true)}
+              className={`hidden sm:inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
+                geminiKey
+                  ? 'border-[#cfe0d2] bg-[#f2f8f4] text-[#24463e] hover:bg-[#e6f2e8]'
+                  : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+              }`}
+            >
+              <KeyRound className="size-3.5" />
+              <span>{geminiKey ? 'Gemini AI Connected' : 'Connect Gemini Key'}</span>
+            </button>
+
+            {/* User Auth Button */}
+            {user ? (
+              <div className="flex items-center gap-2 rounded-xl border border-[#e1e6de] bg-white px-2.5 py-1.5 text-xs font-medium">
+                <span className="grid size-6 place-items-center rounded-full bg-[#d4e1d4] text-[10px] font-bold text-[#315646]">
+                  {user.email ? user.email[0].toUpperCase() : 'U'}
+                </span>
+                <span className="hidden sm:inline text-xs font-semibold text-[#1d2d28]">
+                  {user.user_metadata?.full_name || user.email?.split('@')[0]}
+                </span>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#24463e] px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-[#1b3630]"
+              >
+                <LogIn className="size-3.5" /> Sign In
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* Workspace Body */}
+        <div className="mx-auto max-w-[1320px] px-5 py-7 sm:px-8 lg:px-10">
+          {/* Page Title & Action Bar */}
+          <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+            <div>
+              <p className="mb-1 text-xs font-medium text-[#89948d]">
+                {new Date().toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
+              </p>
+              <h1 className="text-[28px] font-semibold tracking-[-0.04em] text-[#1d2d28]">
+                {activeTab === 'Overview'
+                  ? `Welcome, ${user?.user_metadata?.full_name || 'Jordan'}`
+                  : activeTab}
+              </h1>
+              <p className="mt-0.5 text-xs text-[#748078]">
+                {activeTab === 'Overview'
+                  ? 'Your live financial overview grounded in Supabase data.'
+                  : `Review and manage your real ${activeTab.toLowerCase()} in one place.`}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowCsvModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#d9e1d8] bg-white px-3.5 py-2 text-xs font-semibold text-[#315646] shadow-xs hover:bg-[#f7faf6]"
+              >
+                <Upload className="size-3.5" /> Import Statement
+              </button>
+              <button
+                onClick={() => {
+                  setEditingTransaction(null)
+                  setShowTransactionModal(true)
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#24463e] px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-[#1b3630]"
+              >
+                + Add Transaction
+              </button>
+            </div>
+          </div>
+
+          {/* Render Active Tab */}
+          {activeTab === 'Overview' && (
+            <OverviewTab
+              transactions={transactions}
+              budgets={budgets}
+              recurring={recurring}
+              goals={goals}
+              currency={currency}
+              onNavigate={setActiveTab}
+              onAddTransaction={() => {
+                setEditingTransaction(null)
+                setShowTransactionModal(true)
+              }}
+              onImportCsv={() => setShowCsvModal(true)}
+              onGenerateReport={() => setActiveTab('Reports')}
+            />
+          )}
+
+          {activeTab === 'Transactions' && (
+            <TransactionsTab
+              transactions={transactions}
+              currency={currency}
+              onAdd={() => {
+                setEditingTransaction(null)
+                setShowTransactionModal(true)
+              }}
+              onImport={() => setShowCsvModal(true)}
+              onEdit={tx => {
+                setEditingTransaction(tx)
+                setShowTransactionModal(true)
+              }}
+              onDelete={handleDeleteTransaction}
+            />
+          )}
+
+          {activeTab === 'Budgets' && (
+            <BudgetsTab
+              budgets={budgets}
+              transactions={transactions}
+              currency={currency}
+              onSaveBudget={handleSaveBudget}
+              onDeleteBudget={handleDeleteBudget}
+            />
+          )}
+
+          {activeTab === 'Recurring' && (
+            <RecurringTab
+              recurring={recurring}
+              currency={currency}
+              onSaveRecurring={handleSaveRecurring}
+              onDeleteRecurring={handleDeleteRecurring}
+            />
+          )}
+
+          {activeTab === 'Goals' && (
+            <GoalsTab
+              goals={goals}
+              currency={currency}
+              onSaveGoal={handleSaveGoal}
+              onDeleteGoal={handleDeleteGoal}
+              onAddFunds={handleAddGoalFunds}
+            />
+          )}
+
+          {activeTab === 'Reports' && (
+            <ReportsTab
+              transactions={transactions}
+              budgets={budgets}
+              recurring={recurring}
+              goals={goals}
+              currency={currency}
+              geminiKey={geminiKey}
+              onOpenGeminiModal={() => setShowGeminiModal(true)}
+            />
+          )}
+
+          {/* Docked AI Copilot Assistant Widget */}
+          <section className="mt-8 rounded-2xl border border-[#dce8df] bg-[#eaf3ed] p-5 sm:p-6">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center">
+              <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#d6e7da] text-[#24463e]">
+                <Bot className="size-5" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-[#1d2d28]">Ask FinPilot anything about your money</p>
+                <p className="mt-0.5 text-xs text-[#6e7d74]">
+                  Powered by Google Gemini 2.5 Flash · grounded in your live transactions, budgets, and goals.
+                </p>
+              </div>
+
+              <form
+                onSubmit={e => {
+                  e.preventDefault()
+                  handleAskAgent()
+                }}
+                className="flex w-full gap-2 md:max-w-[480px]"
+              >
+                <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-[#d3e1d5] bg-white px-3 focus-within:border-[#24463e]">
+                  <Search className="size-4 shrink-0 text-[#9aa79e]" />
+                  <input
+                    value={aiQuestion}
+                    onChange={e => setAiQuestion(e.target.value)}
+                    placeholder="Where did I spend the most this month?"
+                    className="min-w-0 flex-1 bg-transparent py-2.5 text-xs outline-none placeholder:text-[#a1aaa4]"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={aiLoading}
+                  className="rounded-xl bg-[#24463e] px-4 text-xs font-semibold text-white shadow-xs transition hover:bg-[#1b3630] disabled:opacity-60"
+                >
+                  {aiLoading ? 'Thinking…' : 'Ask'}
+                </button>
+              </form>
+            </div>
+
+            {/* Quick Prompt Suggestions */}
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-semibold text-[#5c6e63]">Try:</span>
+              {[
+                'Where did I spend the most?',
+                'Am I over budget in any category?',
+                'What are my total recurring subscriptions?',
+                'How can I save $200 more this month?',
+              ].map(prompt => (
+                <button
+                  key={prompt}
+                  onClick={() => {
+                    setAiQuestion(prompt)
+                    handleAskAgent(prompt)
+                  }}
+                  className="rounded-lg border border-[#cbe0d0] bg-white/70 px-2 py-1 text-[11px] font-medium text-[#315646] hover:bg-white"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+
+            {/* AI Answer Bubble */}
+            {aiAnswer && (
+              <div className="mt-4 flex items-start gap-3 rounded-xl border border-[#d5e4d7] bg-white p-4 text-xs leading-relaxed text-[#31443b] shadow-2xs">
+                <Sparkles className="mt-0.5 size-4 shrink-0 text-[#d09235]" />
+                <div className="flex-1">
+                  <p className="mb-1 font-semibold text-[#24463e]">FinPilot Copilot</p>
+                  <div className="whitespace-pre-wrap">{aiAnswer}</div>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      </main>
+
+      {/* Modals */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onSuccess={() => {
+          supabase.auth.getUser().then(({ data }) => setUser(data.user))
+          fetchData()
+        }}
+      />
+
+      <GeminiOnboardingModal
+        isOpen={showGeminiModal}
+        onClose={() => setShowGeminiModal(false)}
+        currentKey={geminiKey}
+        currentCurrency={currency}
+        onSave={(key, curr, seed) => {
+          setGeminiKey(key)
+          setCurrency(curr)
+          if (seed) {
+            seedDataToSupabase()
+          }
+        }}
+      />
+
+      <TransactionModal
+        isOpen={showTransactionModal}
+        onClose={() => {
+          setShowTransactionModal(false)
+          setEditingTransaction(null)
+        }}
+        currency={currency}
+        transactionToEdit={editingTransaction}
+        onSave={handleSaveTransaction}
+      />
+
+      <CsvImportModal
+        isOpen={showCsvModal}
+        onClose={() => setShowCsvModal(false)}
+        currency={currency}
+        onImport={handleBatchImportCsv}
+      />
     </div>
+  )
 }
-
-function MoreHorizontalIcon() { return <span className="text-[#9aa39d]">•••</span> }
-function TransactionRow({ tx, index = 0, onCategorize }: { tx: Transaction; index?: number; onCategorize?: (i: number, category: string) => void }) { return <div className="flex items-center gap-3 px-5 py-3.5"><div className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#e8f0e8] text-xs font-bold text-[#315646]">{tx.mark}</div><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold">{tx.merchant}</p><p className="mt-0.5 truncate text-[10px] text-[#89948d]">{tx.detail}</p></div><div className="hidden text-right sm:block"><p className="text-[10px] text-[#89948d]">{tx.date}</p>{onCategorize ? <select value={tx.category} onChange={e => onCategorize(index, e.target.value)} className="mt-1 rounded border border-transparent bg-transparent text-[10px] text-[#748078] outline-none"><option>Food</option><option>Utilities</option><option>Income</option><option>Subscriptions</option><option>Transport</option><option>Housing</option><option>Healthcare</option></select> : <span className="text-[10px] text-[#748078]">{tx.category}</span>}</div><p className={`text-xs font-semibold ${tx.amount > 0 ? 'text-[#468367]' : ''}`}>{money(tx.amount)}</p></div> }
-function WorkspacePage({ active, transactions, onAdd, onCategorize }: { active: string; transactions: Transaction[]; onAdd: () => void; onCategorize: (i: number, category: string) => void }) { if (active === 'Transactions') return <div className="rounded-2xl border border-[#e5e6df] bg-white"><div className="flex items-center justify-between border-b border-[#edf0eb] p-5"><div><h2 className="text-sm font-semibold">All transactions</h2><p className="mt-1 text-xs text-[#89948d]">Categorize corrections are remembered by FinPilot.</p></div><button onClick={onAdd} className="inline-flex items-center gap-2 rounded-xl bg-[#24463e] px-3 py-2 text-xs font-semibold text-white"><Plus className="size-4" /> Add record</button></div><div className="divide-y divide-[#f0f2ee]">{transactions.map((tx, i) => <TransactionRow key={`${tx.merchant}-${i}`} tx={tx} index={i} onCategorize={onCategorize} />)}</div></div>; if (active === 'Recurring') return <ListPage title="Recurring payments & subscriptions" description="Detected from merchant matching, periodicity, and amount similarity." items={subscriptions.map(s => `${s.name} · $${s.amount.toFixed(2)} · ${s.cadence}`)} onAdd={onAdd} />; if (active === 'Budgets') return <BudgetPage onAdd={onAdd} />; if (active === 'Goals') return <ListPage title="Your goals" description="See how current savings patterns affect your everyday goals." items={['Emergency fund · 42.6% complete · projected 7 months', 'Weekend trip · $720 of $1,200 · target Nov 30']} onAdd={onAdd} />; return <ListPage title="Monthly reports" description="Generate plain-language summaries with observations and action items." items={['September 2026 · Generated today', 'August 2026 · Archived report']} onAdd={onAdd} /> }
-function ListPage({ title, description, items, onAdd }: { title: string; description: string; items: string[]; onAdd: () => void }) { return <div className="rounded-2xl border border-[#e5e6df] bg-white p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold">{title}</h2><p className="mt-1 text-xs text-[#89948d]">{description}</p></div><button onClick={onAdd} className="inline-flex items-center gap-2 rounded-xl bg-[#24463e] px-3 py-2 text-xs font-semibold text-white"><Plus className="size-4" /> Add</button></div><div className="mt-5 flex flex-col gap-2">{items.map(item => <div key={item} className="rounded-xl bg-[#fbfcf8] p-4 text-xs font-medium text-[#536159]">{item}</div>)}</div></div> }
-function BudgetPage({ onAdd }: { onAdd: () => void }) { return <div className="rounded-2xl border border-[#e5e6df] bg-white p-5"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold">Budget health</h2><p className="mt-1 text-xs text-[#89948d]">$2,784 of $3,500 committed · 79% used</p></div><button onClick={onAdd} className="inline-flex items-center gap-2 rounded-xl bg-[#24463e] px-3 py-2 text-xs font-semibold text-white"><Plus className="size-4" /> Add budget</button></div><div className="mt-6 flex flex-col gap-5">{[['Overall budget', 79], ['Food & dining', 68], ['Transport', 42], ['Subscriptions', 31]].map(([name, value]) => <div key={name as string}><div className="mb-2 flex justify-between text-xs"><span className="font-medium">{name}</span><span className="text-[#748078]">{value}%</span></div><div className="h-2 rounded-full bg-[#eef1eb]"><div className="h-full rounded-full bg-[#d7a84a]" style={{ width: `${value}%` }} /></div></div>)}</div></div> }
-function Insight({ tone, icon: Icon, title, children }: { tone: 'green' | 'orange'; icon: typeof Lightbulb; title: string; children: React.ReactNode }) { return <div className={`rounded-2xl border p-5 ${tone === 'green' ? 'border-[#dfebe2] bg-[#edf5ee]' : 'border-[#f0dfd2] bg-[#fff8f2]'}`}><div className="flex gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-white"><Icon className="size-[18px]" /></div><div><h2 className="text-sm font-semibold">{title}</h2><p className="mt-2 text-[13px] leading-relaxed text-[#536159]">{children}</p></div></div></div> }
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) { return <div className="fixed inset-0 z-50 grid place-items-center bg-[#16251f]/30 p-4" role="dialog" aria-modal="true"><div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"><div className="flex items-start justify-between"><h2 className="text-lg font-semibold">{title}</h2><button onClick={onClose} aria-label="Close" className="rounded-lg p-1 text-[#89948d] hover:bg-[#f1f4ef]"><X className="size-4" /></button></div>{children}</div></div> }
